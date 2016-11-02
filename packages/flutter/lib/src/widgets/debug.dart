@@ -48,6 +48,9 @@ bool debugPrintScheduleBuildForStacks = false;
 /// This can help track down framework bugs relating to the [GlobalKey] logic.
 bool debugPrintGlobalKeyedWidgetLifecycle = false;
 
+/// Adds [Timeline] events for every Widget built.
+bool debugProfileBuildsEnabled = false;
+
 Key _firstNonUniqueKey(Iterable<Widget> widgets) {
   Set<Key> keySet = new HashSet<Key>();
   for (Widget widget in widgets) {
