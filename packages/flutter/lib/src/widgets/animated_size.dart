@@ -22,7 +22,8 @@ class AnimatedSize extends SingleChildRenderObjectWidget {
     this.curve: Curves.linear,
     @required this.duration,
     @required this.vsync,
-  }) : super(key: key, child: child);
+    String ctorLocation
+  }) : super(key: key, child: child, ctorLocation: ctorLocation);
 
   /// The alignment of the child within the parent when the parent is not yet
   /// the same size as the child.

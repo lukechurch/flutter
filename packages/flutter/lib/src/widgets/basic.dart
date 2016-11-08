@@ -76,8 +76,9 @@ class Opacity extends SingleChildRenderObjectWidget {
   Opacity({
     Key key,
     @required this.opacity,
-    Widget child
-  }) : super(key: key, child: child) {
+    Widget child,
+    String ctorLocation
+  }) : super(key: key, child: child, ctorLocation: ctorLocation) {
     assert(opacity != null && opacity >= 0.0 && opacity <= 1.0);
   }
 
@@ -286,7 +287,8 @@ class ClipRRect extends SingleChildRenderObjectWidget {
     this.borderRadius,
     this.clipper,
     Widget child,
-  }) : super(key: key, child: child) {
+    String ctorLocation
+  }) : super(key: key, child: child, ctorLocation: ctorLocation) {
     assert(borderRadius != null || clipper != null);
   }
 
@@ -796,8 +798,8 @@ class CustomMultiChildLayout extends MultiChildRenderObjectWidget {
 /// height, treating nulls as zero.
 class SizedBox extends SingleChildRenderObjectWidget {
   /// Creates a box of a specific size.
-  const SizedBox({ Key key, this.width, this.height, Widget child })
-    : super(key: key, child: child);
+  const SizedBox({ Key key, this.width, this.height, Widget child, String ctorLocation })
+    : super(key: key, child: child, ctorLocation: ctorLocation);
 
   /// If non-null, requires the child to have exactly this width.
   final double width;
@@ -1949,7 +1951,8 @@ class Flex extends MultiChildRenderObjectWidget {
     this.crossAxisAlignment: CrossAxisAlignment.center,
     this.textBaseline,
     List<Widget> children: const <Widget>[],
-  }) : super(key: key, children: children) {
+    String ctorLocation
+  }) : super(key: key, children: children, ctorLocation: ctorLocation) {
     assert(direction != null);
     assert(mainAxisAlignment != null);
     assert(mainAxisSize != null);
@@ -2051,6 +2054,7 @@ class Row extends Flex {
     CrossAxisAlignment crossAxisAlignment: CrossAxisAlignment.center,
     TextBaseline textBaseline,
     List<Widget> children: const <Widget>[],
+    String ctorLocation
   }) : super(
     children: children,
     key: key,
@@ -2058,7 +2062,8 @@ class Row extends Flex {
     mainAxisAlignment: mainAxisAlignment,
     mainAxisSize: mainAxisSize,
     crossAxisAlignment: crossAxisAlignment,
-    textBaseline: textBaseline
+    textBaseline: textBaseline,
+    ctorLocation: ctorLocation
   );
 }
 
@@ -2105,6 +2110,7 @@ class Column extends Flex {
     CrossAxisAlignment crossAxisAlignment: CrossAxisAlignment.center,
     TextBaseline textBaseline,
     List<Widget> children: const <Widget>[],
+    String ctorLocation
   }) : super(
     children: children,
     key: key,
@@ -2112,7 +2118,8 @@ class Column extends Flex {
     mainAxisAlignment: mainAxisAlignment,
     mainAxisSize: mainAxisSize,
     crossAxisAlignment: crossAxisAlignment,
-    textBaseline: textBaseline
+    textBaseline: textBaseline,
+    ctorLocation: ctorLocation
   );
 }
 
@@ -2129,8 +2136,9 @@ class Flexible extends ParentDataWidget<Flex> {
     Key key,
     this.flex: 1,
     this.fit: FlexFit.tight,
-    @required Widget child
-  }) : super(key: key, child: child);
+    @required Widget child,
+    String ctorLocation
+  }) : super(key: key, child: child, ctorLocation: ctorLocation);
 
   /// The flex factor to use for this child
   ///
