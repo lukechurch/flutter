@@ -1163,7 +1163,7 @@ abstract class InheritedWidget extends ProxyWidget {
 abstract class RenderObjectWidget extends Widget {
   /// Abstract const constructor. This constructor enables subclasses to provide
   /// const constructors so that they can be used in const expressions.
-  const RenderObjectWidget({ Key key }) : super(key: key);
+  const RenderObjectWidget({ Key key, String ctorLocation }) : super(key: key, ctorLocation: ctorLocation);
 
   /// RenderObjectWidgets always inflate to a [RenderObjectElement] subclass.
   @override
