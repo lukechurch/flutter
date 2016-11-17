@@ -6,6 +6,7 @@ import 'dart:async';
 import 'dart:developer' as developer;
 import 'dart:ui' as ui show window;
 import 'dart:ui' show AppLifecycleState, Locale;
+import 'dart:async' show Future;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/rendering.dart';
@@ -73,6 +74,9 @@ abstract class WidgetsBinding extends BindingBase implements GestureBinding, Ren
   @override
   void initServiceExtensions() {
     super.initServiceExtensions();
+    
+    registerServiceExtension(
+      name: 'debugReturnElementTree', callback: debugReturnElementTree);
 
     registerSignalServiceExtension(
       name: 'debugDumpApp',
@@ -398,6 +402,72 @@ void debugDumpApp() {
     debugPrint('<no tree currently mounted>');
   }
 }
+
+/* Allow the service protocol to access
+ * the Flutter element tree.
+ *  The actual Flutter objects
+ *  collected  are serialized into maps
+ *  to whatever depth we find useful.  The service protocol has expectations wrt to
+ *  this - it expects a type field for example.
+ */
+
+Future<Map<String, dynamic>> debugReturnElementTree(
+    Map<String, String> parameters) async {
+  List<Map<String, dynamic>> stack = [
+    {'children': []}
+  ];
+
+  Element tree =
+      WidgetsBinding.instance.renderViewElement;
+// the root of the element tree
+
+  push(Map<String, dynamic> e) {
+    stack.add(e);
+  }
+
+  Map<String, dynamic> pop() {
+    return stack.removeLast();
+  }
+
+  Map<String, dynamic> top() {
+    return stack.last;
+  }
+
+  String mapType(Type t) => t.toString();
+
+  Map<String, dynamic> mapWidget(e) {
+    return {'type': mapType(e.runtimeType)};
+  }
+
+  Map<String, dynamic> mapRenderObject(e) {
+    return {'type': mapType(e.runtimeType)};
+  }
+
+  Map<String, dynamic> mapElement(e) {
+    return {
+      'type': mapType(e.runtimeType),
+      'widget': mapWidget(e.widget),
+      'isRenderElement': e is RenderObjectElement,
+      'renderObject': mapRenderObject(e.renderObject)
+    };
+  }
+
+  Map<String, dynamic> elementMap(Element e) {
+    return {'element': mapElement(e), 'children': []};
+  }
+
+  void elementCollector(Element e) {
+    var map = elementMap(e);
+    top()['children'].add(map);
+    push(map);
+    e.visitChildren(elementCollector);
+    pop();
+  }
+
+  tree.visitChildren(elementCollector);
+  return top();
+}
+
 
 /// A bridge from a [RenderObject] to an [Element] tree.
 ///
