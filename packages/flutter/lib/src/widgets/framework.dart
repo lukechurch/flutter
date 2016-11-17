@@ -360,7 +360,7 @@ class TypeMatcher<T> {
 ///    particular configuration and ambient state.
 abstract class Widget {
   /// Initializes [key] for subclasses.
-  const Widget({ this.key });
+  const Widget({ this.key, this.ctorLocation });
 
   /// Controls how one widget replaces another widget in the tree.
   ///
@@ -371,6 +371,9 @@ abstract class Widget {
   /// widget is inflated into an element, and the new element is inserted into the
   /// tree.
   final Key key;
+
+  /// Stores the location of the ctor callsite
+  final String ctorLocation;
 
   /// Inflates this configuration to a concrete instance.
   ///
@@ -445,7 +448,8 @@ abstract class Widget {
 ///    be read by descendant widgets.
 abstract class StatelessWidget extends Widget {
   /// Initializes [key] for subclasses.
-  const StatelessWidget({ Key key }) : super(key: key);
+  const StatelessWidget({ Key key, String ctorLocation })
+      : super(key: key, ctorLocation: ctorLocation );
 
   /// Creates a [StatelessElement] to manage this widget's location in the tree.
   ///
@@ -546,7 +550,8 @@ abstract class StatelessWidget extends Widget {
 ///    be read by descendant widgets.
 abstract class StatefulWidget extends Widget {
   /// Initializes [key] for subclasses.
-  const StatefulWidget({ Key key }) : super(key: key);
+  const StatefulWidget({ Key key, String ctorLocation })
+      : super(key: key, ctorLocation: ctorLocation);
 
   /// Creates a [StatefulElement] to manage this widget's location in the tree.
   ///
@@ -1033,7 +1038,8 @@ abstract class State<T extends StatefulWidget> {
 /// [ParentDataWidget].
 abstract class ProxyWidget extends Widget {
   /// Creates a widget that has exactly one child widget.
-  const ProxyWidget({ Key key, this.child }) : super(key: key);
+  const ProxyWidget({ Key key, this.child , String ctorLocation})
+      : super(key: key, ctorLocation: ctorLocation);
 
   /// The widget below this widget in the tree.
   final Widget child;
@@ -1052,8 +1058,8 @@ abstract class ProxyWidget extends Widget {
 abstract class ParentDataWidget<T extends RenderObjectWidget> extends ProxyWidget {
   /// Abstract const constructor. This constructor enables subclasses to provide
   /// const constructors so that they can be used in const expressions.
-  const ParentDataWidget({ Key key, Widget child })
-    : super(key: key, child: child);
+  const ParentDataWidget({ Key key, Widget child, String ctorLocation })
+    : super(key: key, child: child, ctorLocation: ctorLocation);
 
   @override
   ParentDataElement<T> createElement() => new ParentDataElement<T>(this);
@@ -1211,7 +1217,8 @@ abstract class LeafRenderObjectWidget extends RenderObjectWidget {
 abstract class SingleChildRenderObjectWidget extends RenderObjectWidget {
   /// Abstract const constructor. This constructor enables subclasses to provide
   /// const constructors so that they can be used in const expressions.
-  const SingleChildRenderObjectWidget({ Key key, this.child }) : super(key: key);
+  const SingleChildRenderObjectWidget({ Key key, this.child, String ctorLocation })
+      : super(key: key, ctorLocation: ctorLocation);
 
   /// The widget below this widget in the tree.
   final Widget child;
@@ -1229,8 +1236,9 @@ abstract class MultiChildRenderObjectWidget extends RenderObjectWidget {
   ///
   /// The [children] argument must not be null and must not contain any null
   /// objects.
-  MultiChildRenderObjectWidget({ Key key, this.children: const <Widget>[] })
-    : super(key: key) {
+  MultiChildRenderObjectWidget({ Key key,
+  this.children: const <Widget>[], String ctorLocation })
+    : super(key: key, ctorLocation: ctorLocation) {
     assert(children != null);
     assert(!children.any((Widget child) => child == null));
   }

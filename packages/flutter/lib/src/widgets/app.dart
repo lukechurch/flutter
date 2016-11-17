@@ -41,6 +41,7 @@ class WidgetsApp extends StatefulWidget {
   WidgetsApp({
     Key key,
     @required this.onGenerateRoute,
+    ctorLocation,
     this.title,
     this.textStyle,
     this.color,
@@ -49,8 +50,8 @@ class WidgetsApp extends StatefulWidget {
     this.onLocaleChanged,
     this.showPerformanceOverlay: false,
     this.showSemanticsDebugger: false,
-    this.debugShowCheckedModeBanner: true
-  }) : super(key: key) {
+    this.debugShowCheckedModeBanner: true,
+  }) : super(key: key, ctorLocation: ctorLocation) {
     assert(onGenerateRoute != null);
     assert(showPerformanceOverlay != null);
     assert(showSemanticsDebugger != null);

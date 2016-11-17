@@ -134,8 +134,9 @@ class Text extends StatelessWidget {
     this.textAlign,
     this.softWrap,
     this.overflow,
-    this.textScaleFactor
-  }) : super(key: key) {
+    this.textScaleFactor,
+    String ctorLocation,
+  }) : super(key: key, ctorLocation: ctorLocation) {
     assert(data != null);
   }
 
