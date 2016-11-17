@@ -7,6 +7,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as path;
 
+import '../base/common.dart';
 import '../base/logger.dart';
 import '../base/process.dart';
 import '../cache.dart';
@@ -25,7 +26,7 @@ bool _shouldRunPubGet({ File pubSpecYaml, File dotPackages }) {
   return false;
 }
 
-Future<int> pubGet({
+Future<Null> pubGet({
   String directory,
   bool skipIfAbsent: false,
   bool upgrade: false,
@@ -38,10 +39,9 @@ Future<int> pubGet({
   File dotPackages = new File(path.join(directory, '.packages'));
 
   if (!pubSpecYaml.existsSync()) {
-    if (skipIfAbsent)
-      return 0;
-    printError('$directory: no pubspec.yaml found');
-    return 1;
+    if (!skipIfAbsent)
+      throwToolExit('$directory: no pubspec.yaml found');
+    return;
   }
 
   if (!checkLastModified || _shouldRunPubGet(pubSpecYaml: pubSpecYaml, dotPackages: dotPackages)) {
@@ -55,24 +55,25 @@ Future<int> pubGet({
     );
     status.stop();
     if (code != 0)
-      return code;
+      throwToolExit('pub $command failed ($code)', exitCode: code);
   }
 
-  if (dotPackages.existsSync() && dotPackages.lastModifiedSync().isAfter(pubSpecYaml.lastModifiedSync()))
-    return 0;
+  if (!dotPackages.existsSync())
+    throwToolExit('$directory: pub did not create .packages file');
 
-  printError('$directory: pubspec.yaml and .packages are in an inconsistent state');
-  return 1;
+  if (dotPackages.lastModifiedSync().isBefore(pubSpecYaml.lastModifiedSync()))
+    throwToolExit('$directory: pub did not update .packages file (pubspec.yaml file has a newer timestamp)');
 }
 
-String _filterOverrideWarnings(String str) {
-  // Warning: You are using these overridden dependencies:
-  // ! analyzer 0.29.0-alpha.0 from path ../../bin/cache/dart-sdk/lib/analyzer
+final RegExp _analyzerWarning = new RegExp(r'^! analyzer [^ ]+ from path \.\./\.\./bin/cache/dart-sdk/lib/analyzer$');
 
-  if (str.contains('overridden dependencies:'))
+String _filterOverrideWarnings(String message) {
+  // This function filters out these two messages:
+  //   Warning: You are using these overridden dependencies:
+  //   ! analyzer 0.29.0-alpha.0 from path ../../bin/cache/dart-sdk/lib/analyzer
+  if (message == 'Warning: You are using these overridden dependencies:')
     return null;
-  if (str.startsWith('! analyzer '))
+  if (message.contains(_analyzerWarning))
     return null;
-
-  return str;
+  return message;
 }

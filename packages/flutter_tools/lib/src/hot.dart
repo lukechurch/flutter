@@ -12,6 +12,7 @@ import 'package:stack_trace/stack_trace.dart';
 
 import 'application_package.dart';
 import 'asset.dart';
+import 'base/context.dart';
 import 'base/logger.dart';
 import 'base/process.dart';
 import 'base/utils.dart';
@@ -26,6 +27,15 @@ import 'globals.dart';
 import 'resident_runner.dart';
 import 'toolchain.dart';
 import 'vmservice.dart';
+
+class HotRunnerConfig {
+  /// Should the hot runner compute the minimal Dart dependencies?
+  bool computeDartDependencies = true;
+  /// Should the hot runner assume that the minimal Dart dependencies do not change?
+  bool stableDartDependencies = false;
+}
+
+HotRunnerConfig get hotRunnerConfig => context[HotRunnerConfig];
 
 const bool kHotReloadDefault = true;
 
@@ -79,42 +89,6 @@ class DartDependencySetBuilder {
   }
 }
 
-
-class FirstFrameTimer {
-  FirstFrameTimer(this.vmService);
-
-  void start() {
-    stopwatch.reset();
-    stopwatch.start();
-    _subscription = vmService.onExtensionEvent.listen(_onExtensionEvent);
-  }
-
-  /// Returns a Future which completes after the first frame event is received.
-  Future<Null> firstFrame() => _completer.future;
-
-  void _onExtensionEvent(ServiceEvent event) {
-    if (event.extensionKind == 'Flutter.FirstFrame')
-      _stop();
-  }
-
-  void _stop() {
-    _subscription?.cancel();
-    _subscription = null;
-    stopwatch.stop();
-    _completer.complete(null);
-  }
-
-  Duration get elapsed {
-    assert(!stopwatch.isRunning);
-    return stopwatch.elapsed;
-  }
-
-  final VMService vmService;
-  final Stopwatch stopwatch = new Stopwatch();
-  final Completer<Null> _completer = new Completer<Null>();
-  StreamSubscription<ServiceEvent> _subscription;
-}
-
 class HotRunner extends ResidentRunner {
   HotRunner(
     Device device, {
@@ -125,6 +99,7 @@ class HotRunner extends ResidentRunner {
     this.applicationBinary,
     String projectRootPath,
     String packagesFilePath,
+    String projectAssets,
   }) : super(device,
              target: target,
              debuggingOptions: debuggingOptions,
@@ -132,6 +107,10 @@ class HotRunner extends ResidentRunner {
     _projectRootPath = projectRootPath ?? Directory.current.path;
     _packagesFilePath =
             packagesFilePath ?? path.absolute(PackageMap.globalPackagesPath);
+    if (projectAssets != null)
+      _bundle = new AssetBundle.fixed(_projectRootPath, projectAssets);
+    else
+      _bundle = new AssetBundle();
   }
 
   ApplicationPackage _package;
@@ -142,7 +121,8 @@ class HotRunner extends ResidentRunner {
   bool get prebuiltMode => applicationBinary != null;
   Set<String> _dartDependencies;
   int _observatoryPort;
-  final AssetBundle bundle = new AssetBundle();
+  AssetBundle _bundle;
+  AssetBundle get bundle => _bundle;
   final bool benchmarkMode;
   final Map<String, int> benchmarkData = new Map<String, int>();
 
@@ -168,6 +148,10 @@ class HotRunner extends ResidentRunner {
   }
 
   bool _refreshDartDependencies() {
+    if (!hotRunnerConfig.computeDartDependencies) {
+      // Disabled.
+      return true;
+    }
     if (_dartDependencies != null) {
       // Already computed.
       return true;
@@ -221,14 +205,11 @@ class HotRunner extends ResidentRunner {
     if (shouldBuild && device is AndroidDevice) {
       printTrace('Running build command.');
 
-      int result = await buildApk(
+      await buildApk(
         device.platform,
         target: target,
         buildMode: debuggingOptions.buildMode
       );
-
-      if (result != 0)
-        return result;
     }
 
     // TODO(devoncarew): Move this into the device.startApp() impls.
@@ -245,7 +226,7 @@ class HotRunner extends ResidentRunner {
 
     Map<String, dynamic> platformArgs = new Map<String, dynamic>();
 
-    await startEchoingDeviceLog();
+    await startEchoingDeviceLog(_package);
 
     printTrace('Launching loader on ${device.name}...');
 
@@ -387,19 +368,23 @@ class HotRunner extends ResidentRunner {
       // Did not update DevFS because of a Dart source error.
       return false;
     }
-    Status devFSStatus = logger.startProgress('Syncing files to device...');
     final bool rebuildBundle = bundle.needsBuild();
     if (rebuildBundle) {
       printTrace('Updating assets');
-      await bundle.build();
+      int result = await bundle.build();
+      if (result != 0)
+        return false;
     }
+    Status devFSStatus = logger.startProgress('Syncing files to device...');
     await _devFS.update(progressReporter: progressReporter,
                         bundle: bundle,
                         bundleDirty: rebuildBundle,
                         fileFilter: _dartDependencies);
     devFSStatus.stop();
-    // Clear the set after the sync.
-    _dartDependencies = null;
+    if (!hotRunnerConfig.stableDartDependencies) {
+      // Clear the set after the sync so they are recomputed next time.
+      _dartDependencies = null;
+    }
     printTrace('Synced ${getSizeAsMB(_devFS.bytes)}.');
     return true;
   }
@@ -448,31 +433,21 @@ class HotRunner extends ResidentRunner {
   }
 
   Future<OperationResult> _restartFromSources() async {
-    FirstFrameTimer firstFrameTimer = new FirstFrameTimer(vmService);
-    firstFrameTimer.start();
+    Stopwatch restartTimer = new Stopwatch();
+    restartTimer.start();
     bool updatedDevFS = await _updateDevFS();
     if (!updatedDevFS)
       return new OperationResult(1, 'Dart Source Error');
     await _launchFromDevFS(_package, _mainPath);
-    bool waitForFrame =
-        await currentView.uiIsolate.flutterFrameworkPresent();
-    Status restartStatus =
-        logger.startProgress('Waiting for application to start...');
-    if (waitForFrame) {
-      // Wait for the first frame to be rendered.
-      await firstFrameTimer.firstFrame();
-    }
-    restartStatus.stop();
-    if (waitForFrame) {
-      printTrace('Restart performed in '
-                 '${getElapsedAsMilliseconds(firstFrameTimer.elapsed)}.');
-      if (benchmarkMode) {
-        benchmarkData['hotRestartMillisecondsToFrame'] =
-            firstFrameTimer.elapsed.inMilliseconds;
-      }
-      flutterUsage.sendTiming('hot', 'restart', firstFrameTimer.elapsed);
+    restartTimer.stop();
+    printTrace('Restart performed in '
+        '${getElapsedAsMilliseconds(restartTimer.elapsed)}.');
+    if (benchmarkMode) {
+      benchmarkData['hotRestartMillisecondsToFrame'] =
+          restartTimer.elapsed.inMilliseconds;
     }
     flutterUsage.sendEvent('hot', 'restart');
+    flutterUsage.sendTiming('hot', 'restart', restartTimer.elapsed);
     return OperationResult.ok;
   }
 
@@ -488,9 +463,12 @@ class HotRunner extends ResidentRunner {
   }
 
   @override
+  bool get supportsRestart => true;
+
+  @override
   Future<OperationResult> restart({ bool fullRestart: false, bool pauseAfterRestart: false }) async {
     if (fullRestart) {
-      Status status = logger.startProgress('Performing full restart...');
+      Status status = logger.startProgress('Performing full restart...', progressId: 'hot.restart');
       try {
         await _restartFromSources();
         status.stop();
@@ -501,7 +479,7 @@ class HotRunner extends ResidentRunner {
         rethrow;
       }
     } else {
-      Status status = logger.startProgress('Performing hot reload...');
+      Status status = logger.startProgress('Performing hot reload...', progressId: 'hot.reload');
       try {
         OperationResult result = await _reloadSources(pause: pauseAfterRestart);
         status.stop();
@@ -518,13 +496,11 @@ class HotRunner extends ResidentRunner {
   Future<OperationResult> _reloadSources({ bool pause: false }) async {
     if (currentView.uiIsolate == null)
       throw 'Application isolate not found';
-    FirstFrameTimer firstFrameTimer = new FirstFrameTimer(vmService);
-    firstFrameTimer.start();
-    if (_devFS != null) {
-      bool updatedDevFS = await _updateDevFS();
-      if (!updatedDevFS)
-        return new OperationResult(1, 'Dart Source Error');
-    }
+    Stopwatch reloadTimer = new Stopwatch();
+    reloadTimer.start();
+    bool updatedDevFS = await _updateDevFS();
+    if (!updatedDevFS)
+      return new OperationResult(1, 'Dart Source Error');
     String reloadMessage;
     try {
       Map<String, dynamic> reloadReport =
@@ -560,13 +536,12 @@ class HotRunner extends ResidentRunner {
     if ((pauseEvent != null) && (pauseEvent.isPauseEvent)) {
       // Isolate is paused. Stop here.
       printTrace('Skipping reassemble because isolate is paused.');
-      return OperationResult.ok;
+      return new OperationResult(OperationResult.ok.code, reloadMessage);
     }
     await _evictDirtyAssets();
     printTrace('Reassembling application');
-    bool waitForFrame = true;
     try {
-      waitForFrame = (await currentView.uiIsolate.flutterReassemble() != null);
+      await currentView.uiIsolate.flutterReassemble();
     } catch (_) {
       printError('Reassembling application failed.');
       return new OperationResult(1, 'error reassembling application');
@@ -577,36 +552,32 @@ class HotRunner extends ResidentRunner {
     } catch (_) {
       /* ignore any errors */
     }
-    if (waitForFrame) {
-      // When the framework is present, we can wait for the first frame
-      // event and measure reload time.
-      await firstFrameTimer.firstFrame();
-      printTrace('Hot reload performed in '
-                 '${getElapsedAsMilliseconds(firstFrameTimer.elapsed)}.');
-      if (benchmarkMode) {
-        benchmarkData['hotReloadMillisecondsToFrame'] =
-            firstFrameTimer.elapsed.inMilliseconds;
-      }
-      flutterUsage.sendTiming('hot', 'reload', firstFrameTimer.elapsed);
+    reloadTimer.stop();
+    printTrace('Hot reload performed in '
+               '${getElapsedAsMilliseconds(reloadTimer.elapsed)}.');
+    if (benchmarkMode) {
+      benchmarkData['hotReloadMillisecondsToFrame'] =
+          reloadTimer.elapsed.inMilliseconds;
     }
+    flutterUsage.sendTiming('hot', 'reload', reloadTimer.elapsed);
     return new OperationResult(OperationResult.ok.code, reloadMessage);
   }
 
   @override
   void printHelp({ @required bool details }) {
     const String fire = '🔥';
-    const String redOnBlack = '\u001B[31;40m';
+    const String red = '\u001B[31m';
     const String bold = '\u001B[0;1m';
     const String reset = '\u001B[0m';
     printStatus(
       '$fire  To hot reload your app on the fly, press "r" or F5. To restart the app entirely, press "R".',
-      ansiAlternative: '$redOnBlack$fire$bold  To ${redOnBlack}hot reload$bold your app on the fly, '
+      ansiAlternative: '$red$fire$bold  To hot reload your app on the fly, '
                        'press "r" or F5. To restart the app entirely, press "R".$reset'
     );
     printStatus('The Observatory debugger and profiler is available at: http://127.0.0.1:$_observatoryPort/');
     if (details) {
       printStatus('To dump the widget hierarchy of the app (debugDumpApp), press "w".');
-      printStatus('To dump the rendering tree of the app (debugDumpRenderTree), press "r".');
+      printStatus('To dump the rendering tree of the app (debugDumpRenderTree), press "t".');
       printStatus('To repeat this help message, press "h" or F1. To quit, press "q", F10, or Ctrl-C.');
     } else {
       printStatus('For a more detailed help message, press "h" or F1. To quit, press "q", F10, or Ctrl-C.');

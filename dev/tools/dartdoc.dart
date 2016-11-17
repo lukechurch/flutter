@@ -82,7 +82,22 @@ dependencies:
   if (exitCode != 0)
     exit(exitCode);
 
+  sanityCheckDocs();
+
   createIndexAndCleanup();
+}
+
+void sanityCheckDocs() {
+  List<String> canaries = <String>[
+    '$kDocRoot/api/material/Material-class.html',
+    '$kDocRoot/api/material/Tooltip-class.html',
+    '$kDocRoot/api/widgets/Widget-class.html',
+    '$kDocRoot/api/dart-ui/Canvas-class.html',
+  ];
+  for (String canary in canaries) {
+    if (!new File(canary).existsSync())
+      throw new Exception('Missing "$canary", which probably means the documentation failed to build correctly.');
+  }
 }
 
 /// Creates a custom index.html because we try to maintain old
@@ -133,11 +148,12 @@ List<String> findPackageNames() {
 List<Directory> findPackages() {
   return new Directory('packages')
     .listSync()
-    .where((FileSystemEntity entity) => entity is Directory)
-    .where((Directory dir) {
-      File pubspec = new File('${dir.path}/pubspec.yaml');
-      bool nodoc = pubspec.readAsStringSync().contains('nodoc: true');
-      return !nodoc;
+    .where((FileSystemEntity entity) {
+      if (entity is! Directory)
+        return false;
+      File pubspec = new File('${entity.path}/pubspec.yaml');
+      // TODO(ianh): Use a real YAML parser here
+      return !pubspec.readAsStringSync().contains('nodoc: true');
     })
     .toList();
 }
@@ -145,7 +161,6 @@ List<Directory> findPackages() {
 Iterable<String> libraryRefs() sync* {
   for (Directory dir in findPackages()) {
     String dirName = path.basename(dir.path);
-
     for (FileSystemEntity file in new Directory('${dir.path}/lib').listSync()) {
       if (file is File && file.path.endsWith('.dart'))
         yield '$dirName/${path.basename(file.path)}';

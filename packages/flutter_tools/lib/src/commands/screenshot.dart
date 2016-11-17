@@ -5,11 +5,12 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter_tools/src/device.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as path;
 
+import '../base/common.dart';
 import '../base/utils.dart';
+import '../device.dart';
 import '../globals.dart';
 import '../runner/flutter_command.dart';
 
@@ -51,32 +52,24 @@ class ScreenshotCommand extends FlutterCommand {
   Device device;
 
   @override
-  Future<int> verifyThenRunCommand() async {
+  Future<Null> verifyThenRunCommand() async {
     if (argResults[_kSkia] != null) {
-      if (argResults[_kOut] != null && argResults[_kSkiaServe] != null) {
-        printError('Cannot specify both --$_kOut and --$_kSkiaServe');
-        return 1;
-      }
+      if (argResults[_kOut] != null && argResults[_kSkiaServe] != null)
+        throwToolExit('Cannot specify both --$_kOut and --$_kSkiaServe');
     } else {
-      if (argResults[_kSkiaServe] != null) {
-        printError('Must specify --$_kSkia with --$_kSkiaServe');
-        return 1;
-      }
+      if (argResults[_kSkiaServe] != null)
+        throwToolExit('Must specify --$_kSkia with --$_kSkiaServe');
       device = await findTargetDevice();
-      if (device == null) {
-        printError('Must specify --$_kSkia or have a connected device');
-        return 1;
-      }
-      if (!device.supportsScreenshot && argResults[_kSkia] == null) {
-        printError('Screenshot not supported for ${device.name}.');
-        return 1;
-      }
+      if (device == null)
+        throwToolExit('Must specify --$_kSkia or have a connected device');
+      if (!device.supportsScreenshot && argResults[_kSkia] == null)
+        throwToolExit('Screenshot not supported for ${device.name}.');
     }
     return super.verifyThenRunCommand();
   }
 
   @override
-  Future<int> runCommand() async {
+  Future<Null> runCommand() async {
     File outputFile;
     if (argResults.wasParsed(_kOut))
       outputFile = new File(argResults[_kOut]);
@@ -88,44 +81,36 @@ class ScreenshotCommand extends FlutterCommand {
     }
   }
 
-  Future<int> runScreenshot(File outputFile) async {
+  Future<Null> runScreenshot(File outputFile) async {
     outputFile ??= getUniqueFile(Directory.current, 'flutter', 'png');
     try {
-      if (await device.takeScreenshot(outputFile)) {
-        await showOutputFileInfo(outputFile);
-        return 0;
-      }
+      if (!await device.takeScreenshot(outputFile))
+        throwToolExit('Screenshot failed');
     } catch (error) {
-      printError('Error taking screenshot: $error');
+      throwToolExit('Error taking screenshot: $error');
     }
-    return 1;
+    await showOutputFileInfo(outputFile);
   }
 
-  Future<int> runSkia(File outputFile) async {
+  Future<Null> runSkia(File outputFile) async {
     Uri skpUri = new Uri(scheme: 'http', host: '127.0.0.1',
         port: int.parse(argResults[_kSkia]),
         path: '/skp');
 
-    void printErrorHelpText() {
-      printError('');
-      printError('Be sure the --$_kSkia= option specifies the diagnostic server port, not the observatory port.');
-      printError('To find the diagnostic server port number, use "flutter run --verbose"');
-      printError('and look for "Diagnostic server listening on" in the output.');
-    }
+    const String errorHelpText =
+        'Be sure the --$_kSkia= option specifies the diagnostic server port, not the observatory port.\n'
+        'To find the diagnostic server port number, use "flutter run --verbose"\n'
+        'and look for "Diagnostic server listening on" in the output.';
 
     http.StreamedResponse skpResponse;
     try {
       skpResponse = await new http.Request('GET', skpUri).send();
     } on SocketException catch (e) {
-      printError('Skia screenshot failed: $skpUri\n$e');
-      printErrorHelpText();
-      return 1;
+      throwToolExit('Skia screenshot failed: $skpUri\n$e\n\n$errorHelpText');
     }
     if (skpResponse.statusCode != HttpStatus.OK) {
       String error = await skpResponse.stream.toStringStream().join();
-      printError('Error: $error');
-      printErrorHelpText();
-      return 1;
+      throwToolExit('Error: $error\n\n$errorHelpText');
     }
 
     if (argResults[_kSkiaServe] != null) {
@@ -136,11 +121,8 @@ class ScreenshotCommand extends FlutterCommand {
           'file', skpResponse.stream, skpResponse.contentLength));
 
       http.StreamedResponse postResponse = await postRequest.send();
-      if (postResponse.statusCode != HttpStatus.OK) {
-        printError('Failed to post Skia picture to skiaserve.');
-        printErrorHelpText();
-        return 1;
-      }
+      if (postResponse.statusCode != HttpStatus.OK)
+        throwToolExit('Failed to post Skia picture to skiaserve.\n\n$errorHelpText');
     } else {
       outputFile ??= getUniqueFile(Directory.current, 'flutter', 'skp');
       IOSink sink = outputFile.openWrite();
@@ -149,15 +131,10 @@ class ScreenshotCommand extends FlutterCommand {
       await showOutputFileInfo(outputFile);
       if (await outputFile.length() < 1000) {
         String content = await outputFile.readAsString();
-        if (content.startsWith('{"jsonrpc":"2.0", "error"')) {
-          printError('');
-          printError('It appears the output file contains an error message, not valid skia output.');
-          printErrorHelpText();
-          return 1;
-        }
+        if (content.startsWith('{"jsonrpc":"2.0", "error"'))
+          throwToolExit('\nIt appears the output file contains an error message, not valid skia output.\n\n$errorHelpText');
       }
     }
-    return 0;
   }
 
   Future<Null> showOutputFileInfo(File outputFile) async {

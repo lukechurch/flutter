@@ -7,6 +7,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../android/android_device.dart';
+import '../base/common.dart';
 import '../base/context.dart';
 import '../base/logger.dart';
 import '../base/utils.dart';
@@ -42,7 +43,7 @@ class DaemonCommand extends FlutterCommand {
   final bool hidden;
 
   @override
-  Future<int> runCommand() {
+  Future<Null> runCommand() {
     printStatus('Starting device daemon...');
 
     AppContext appContext = new AppContext();
@@ -51,12 +52,14 @@ class DaemonCommand extends FlutterCommand {
 
     Cache.releaseLockEarly();
 
-    return appContext.runInZone(() {
+    return appContext.runInZone(() async {
       Daemon daemon = new Daemon(
           stdinCommandStream, stdoutCommandResponse,
           daemonCommand: this, notifyingLogger: notifyingLogger);
 
-      return daemon.onExit;
+      int code = await daemon.onExit;
+      if (code != null)
+        throwToolExit(null, exitCode: code);
     }, onError: _handleError);
   }
 
@@ -386,7 +389,7 @@ class AppDomain extends Domain {
   }
 
   bool isRestartSupported(bool enableHotReload, Device device) =>
-      enableHotReload ? device.supportsHotMode : device.supportsRestart;
+      enableHotReload && device.supportsHotMode;
 
   Future<OperationResult> restart(Map<String, dynamic> args) async {
     String appId = _getStringArg(args, 'appId', required: true);
@@ -634,7 +637,7 @@ class NotifyingLogger extends Logger {
   }
 
   @override
-  Status startProgress(String message) {
+  Status startProgress(String message, { String progressId }) {
     printStatus(message);
     return new Status();
   }
@@ -708,7 +711,7 @@ class _AppRunLogger extends Logger {
   Status _status;
 
   @override
-  Status startProgress(String message) {
+  Status startProgress(String message, { String progressId }) {
     // Ignore nested progresses; return a no-op status object.
     if (_status != null)
       return new Status();
@@ -717,10 +720,11 @@ class _AppRunLogger extends Logger {
 
     _sendProgressEvent(<String, dynamic>{
       'id': id.toString(),
+      'progressId': progressId,
       'message': message,
     });
 
-    _status = new _AppLoggerStatus(this, id);
+    _status = new _AppLoggerStatus(this, id, progressId);
     return _status;
   }
 
@@ -744,10 +748,11 @@ class _AppRunLogger extends Logger {
 }
 
 class _AppLoggerStatus implements Status {
-  _AppLoggerStatus(this.logger, this.id);
+  _AppLoggerStatus(this.logger, this.id, this.progressId);
 
   final _AppRunLogger logger;
   final int id;
+  final String progressId;
 
   @override
   void stop({ bool showElapsedTime: true }) {
@@ -764,6 +769,7 @@ class _AppLoggerStatus implements Status {
   void _sendFinished() {
     logger._sendProgressEvent(<String, dynamic>{
       'id': id.toString(),
+      'progressId': progressId,
       'finished': true
     });
   }

@@ -9,7 +9,6 @@ import 'package:meta/meta.dart';
 import 'package:stack_trace/stack_trace.dart';
 
 import 'application_package.dart';
-import 'base/logger.dart';
 import 'base/utils.dart';
 import 'commands/build_apk.dart';
 import 'commands/install.dart';
@@ -17,7 +16,6 @@ import 'commands/trace.dart';
 import 'device.dart';
 import 'globals.dart';
 import 'resident_runner.dart';
-import 'vmservice.dart';
 
 class RunAndStayResident extends ResidentRunner {
   RunAndStayResident(
@@ -26,7 +24,6 @@ class RunAndStayResident extends ResidentRunner {
     DebuggingOptions debuggingOptions,
     bool usesTerminalUI: true,
     this.traceStartup: false,
-    this.benchmark: false,
     this.applicationBinary
   }) : super(device,
              target: target,
@@ -37,7 +34,6 @@ class RunAndStayResident extends ResidentRunner {
   String _mainPath;
   LaunchResult _result;
   final bool traceStartup;
-  final bool benchmark;
   final String applicationBinary;
 
   bool get prebuiltMode => applicationBinary != null;
@@ -54,7 +50,6 @@ class RunAndStayResident extends ResidentRunner {
       assert(shouldBuild == !prebuiltMode);
       return _run(
         traceStartup: traceStartup,
-        benchmark: benchmark,
         connectionInfoCompleter: connectionInfoCompleter,
         appStartedCompleter: appStartedCompleter,
         route: route,
@@ -65,43 +60,8 @@ class RunAndStayResident extends ResidentRunner {
     });
   }
 
-  @override
-  Future<OperationResult> restart({ bool fullRestart: false, bool pauseAfterRestart: false }) async {
-    if (vmService == null) {
-      printError('Debugging is not enabled.');
-      return new OperationResult(1, 'debugging not enabled');
-    } else {
-      Status status = logger.startProgress('Re-starting application...');
-
-      Future<ServiceEvent> extensionAddedEvent;
-
-      if (device.restartSendsFrameworkInitEvent) {
-        extensionAddedEvent = vmService.onExtensionEvent
-          .where((ServiceEvent event) => event.extensionKind == 'Flutter.FrameworkInitialization')
-          .first;
-      }
-
-      bool result = await device.restartApp(
-        _package,
-        _result,
-        mainPath: _mainPath,
-        observatory: vmService,
-        prebuiltApplication: prebuiltMode
-      );
-
-      status.stop();
-
-      if (result && extensionAddedEvent != null) {
-        await extensionAddedEvent;
-      }
-
-      return result ? OperationResult.ok : new OperationResult(1, 'restart error');
-    }
-  }
-
   Future<int> _run({
     bool traceStartup: false,
-    bool benchmark: false,
     Completer<DebugConnectionInfo> connectionInfoCompleter,
     Completer<Null> appStartedCompleter,
     String route,
@@ -135,14 +95,11 @@ class RunAndStayResident extends ResidentRunner {
     if (shouldBuild && device is AndroidDevice) {
       printTrace('Running build command.');
 
-      int result = await buildApk(
+      await buildApk(
         device.platform,
         target: target,
         buildMode: debuggingOptions.buildMode
       );
-
-      if (result != 0)
-        return result;
     }
 
     // TODO(devoncarew): Move this into the device.startApp() impls.
@@ -162,7 +119,7 @@ class RunAndStayResident extends ResidentRunner {
     if (traceStartup != null)
       platformArgs = <String, dynamic>{ 'trace-startup': traceStartup };
 
-    await startEchoingDeviceLog();
+    await startEchoingDeviceLog(_package);
     if (_mainPath == null) {
       assert(prebuiltMode);
       printStatus('Running ${_package.displayName} on ${device.name}');
@@ -194,10 +151,6 @@ class RunAndStayResident extends ResidentRunner {
     // Connect to observatory.
     if (debuggingOptions.debuggingEnabled) {
       await connectToServiceProtocol(_result.observatoryPort);
-
-      if (benchmark) {
-        await vmService.getVM();
-      }
     }
 
     printTrace('Application running.');
@@ -223,36 +176,11 @@ class RunAndStayResident extends ResidentRunner {
 
     appStartedCompleter?.complete();
 
-    if (benchmark) {
-      await new Future<Null>.delayed(new Duration(seconds: 4));
-
-      // Touch the file.
-      File mainFile = new File(_mainPath);
-      mainFile.writeAsBytesSync(mainFile.readAsBytesSync());
-
-      Stopwatch restartTime = new Stopwatch()..start();
-      OperationResult result = await restart();
-      restartTime.stop();
-      writeRunBenchmarkFile(startTime, result.isOk ? restartTime : null);
-      await new Future<Null>.delayed(new Duration(seconds: 2));
-      stop();
-    }
-
     return waitForAppToFinish();
   }
 
   @override
-  Future<Null> handleTerminalCommand(String code) async {
-    String lower = code.toLowerCase();
-    if (lower == 'r' || code == AnsiTerminal.KEY_F5) {
-      if (!supportsServiceProtocol)
-        return;
-      if (device.supportsRestart) {
-        // F5, restart
-        await restart();
-      }
-    }
-  }
+  Future<Null> handleTerminalCommand(String code) async => null;
 
   @override
   Future<Null> cleanupAfterSignal() async {
@@ -268,15 +196,13 @@ class RunAndStayResident extends ResidentRunner {
   @override
   void printHelp({ @required bool details }) {
     bool haveDetails = false;
-    if (!prebuiltMode && device.supportsRestart && supportsServiceProtocol)
-      printStatus('To restart the app, press "r" or F5.');
     if (_result.hasObservatory)
       printStatus('The Observatory debugger and profiler is available at: http://127.0.0.1:${_result.observatoryPort}/');
     if (supportsServiceProtocol) {
       haveDetails = true;
       if (details) {
         printStatus('To dump the widget hierarchy of the app (debugDumpApp), press "w".');
-        printStatus('To dump the rendering tree of the app (debugDumpRenderTree), press "r".');
+        printStatus('To dump the rendering tree of the app (debugDumpRenderTree), press "t".');
       }
     }
     if (haveDetails && !details) {
@@ -292,17 +218,4 @@ class RunAndStayResident extends ResidentRunner {
     if (vmService == null)
       await device.stopApp(_package);
   }
-}
-
-void writeRunBenchmarkFile(Stopwatch startTime, [Stopwatch restartTime]) {
-  final String benchmarkOut = 'refresh_benchmark.json';
-  Map<String, dynamic> data = <String, dynamic>{
-    'start': startTime.elapsedMilliseconds,
-    'time': (restartTime ?? startTime).elapsedMilliseconds // time and restart are the same
-  };
-  if (restartTime != null)
-    data['restart'] = restartTime.elapsedMilliseconds;
-
-  new File(benchmarkOut).writeAsStringSync(toPrettyJson(data));
-  printStatus('Run benchmark written to $benchmarkOut ($data).');
 }

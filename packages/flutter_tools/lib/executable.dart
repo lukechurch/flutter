@@ -35,9 +35,11 @@ import 'src/commands/test.dart';
 import 'src/commands/trace.dart';
 import 'src/commands/update_packages.dart';
 import 'src/commands/upgrade.dart';
+import 'src/devfs.dart';
 import 'src/device.dart';
 import 'src/doctor.dart';
 import 'src/globals.dart';
+import 'src/hot.dart';
 import 'src/runner/flutter_command_runner.dart';
 
 /// Main entry point for commands.
@@ -81,12 +83,19 @@ Future<Null> main(List<String> args) async {
 
   return Chain.capture/*<Future<Null>>*/(() async {
     // Initialize globals.
-    context[Logger] = new StdoutLogger();
-    context[DeviceManager] = new DeviceManager();
-    Doctor.initGlobal();
+    if (context[Logger] == null)
+      context[Logger] = new StdoutLogger();
+    if (context[DeviceManager] == null)
+      context[DeviceManager] = new DeviceManager();
+    if (context[DevFSConfig] == null)
+      context[DevFSConfig] = new DevFSConfig();
+    if (context[Doctor] == null)
+      context[Doctor] = new Doctor();
+    if (context[HotRunnerConfig] == null)
+      context[HotRunnerConfig] = new HotRunnerConfig();
 
-    dynamic result = await runner.run(args);
-    _exit(result is int ? result : 0);
+    await runner.run(args);
+    _exit(0);
   }, onError: (dynamic error, Chain chain) {
     if (error is UsageException) {
       stderr.writeln(error.message);
@@ -98,15 +107,14 @@ Future<Null> main(List<String> args) async {
       // Argument error exit code.
       _exit(64);
     } else if (error is ToolExit) {
-      stderr.writeln(error.message);
+      if (error.message != null)
+        stderr.writeln(error.message);
       if (verbose) {
         stderr.writeln();
         stderr.writeln(chain.terse.toString());
         stderr.writeln();
       }
-      stderr.writeln('If this problem persists, please report the problem at');
-      stderr.writeln('https://github.com/flutter/flutter/issues/new');
-      _exit(error.exitCode ?? 65);
+      _exit(error.exitCode ?? 1);
     } else if (error is ProcessExit) {
       // We've caught an exit code.
       _exit(error.exitCode);

@@ -13,7 +13,6 @@ import 'base/os.dart';
 import 'base/utils.dart';
 import 'build_info.dart';
 import 'globals.dart';
-import 'vmservice.dart';
 import 'ios/devices.dart';
 import 'ios/simulators.dart';
 
@@ -165,8 +164,10 @@ abstract class Device {
 
   String get sdkNameAndVersion;
 
-  /// Get the log reader for this device.
-  DeviceLogReader get logReader;
+  /// Get a log reader for this device.
+  /// If [app] is specified, this will return a log reader specific to that
+  /// application. Otherwise, a global log reader will be returned.
+  DeviceLogReader getLogReader({ApplicationPackage app});
 
   /// Get the port forwarder for this device.
   DevicePortForwarder get portForwarder;
@@ -189,30 +190,7 @@ abstract class Device {
   });
 
   /// Does this device implement support for hot reloading / restarting?
-  bool get supportsHotMode => false;
-
-  /// Run from a file. Necessary for hot mode.
-  Future<bool> runFromFile(ApplicationPackage package,
-                           String scriptUri,
-                           String packagesUri) {
-    throw 'runFromFile unsupported';
-  }
-
-  bool get supportsRestart => false;
-
-  bool get restartSendsFrameworkInitEvent => true;
-
-  /// Restart the given app; the application will already have been launched with
-  /// [startApp].
-  Future<bool> restartApp(
-    ApplicationPackage package,
-    LaunchResult result, {
-    String mainPath,
-    VMService observatory,
-    bool prebuiltApplication: false
-  }) async {
-    throw 'unsupported';
-  }
+  bool get supportsHotMode => true;
 
   /// Stop an app package on the current device.
   Future<bool> stopApp(ApplicationPackage app);

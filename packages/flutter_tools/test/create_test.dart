@@ -7,6 +7,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:args/command_runner.dart';
+import 'package:flutter_tools/src/base/common.dart';
 import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/commands/create.dart';
 import 'package:flutter_tools/src/dart/sdk.dart';
@@ -42,10 +43,9 @@ void main() {
       Cache.flutterRoot = '../..';
 
       CreateCommand command = new CreateCommand();
-      CommandRunner runner = createTestCommandRunner(command);
+      CommandRunner<Null> runner = createTestCommandRunner(command);
 
-      int code = await runner.run(<String>['create', '--no-pub', temp.path]);
-      expect(code, 0);
+      await runner.run(<String>['create', '--no-pub', temp.path]);
 
       void expectExists(String relPath) {
         expect(FileSystemEntity.isFileSync('${temp.path}/$relPath'), true);
@@ -73,13 +73,11 @@ void main() {
       Cache.flutterRoot = '../..';
 
       CreateCommand command = new CreateCommand();
-      CommandRunner runner = createTestCommandRunner(command);
+      CommandRunner<Null> runner = createTestCommandRunner(command);
 
-      int code = await runner.run(<String>['create', '--no-pub', temp.path]);
-      expect(code, 0);
+      await runner.run(<String>['create', '--no-pub', temp.path]);
 
-      code = await runner.run(<String>['create', '--no-pub', temp.path]);
-      expect(code, 0);
+      await runner.run(<String>['create', '--no-pub', temp.path]);
     });
 
     // Verify that we help the user correct an option ordering issue
@@ -87,22 +85,30 @@ void main() {
       Cache.flutterRoot = '../..';
 
       CreateCommand command = new CreateCommand();
-      CommandRunner runner = createTestCommandRunner(command);
+      CommandRunner<Null> runner = createTestCommandRunner(command);
 
-      int code = await runner.run(<String>['create', temp.path, '--pub']);
-      expect(code, 2);
-      expect(testLogger.errorText, contains('Try moving --pub'));
+      try {
+        await runner.run(<String>['create', temp.path, '--pub']);
+        fail('expected ToolExit exception');
+      } on ToolExit catch (e) {
+        expect(e.exitCode, 2);
+        expect(e.message, contains('Try moving --pub'));
+      }
     });
 
     // Verify that we fail with an error code when the file exists.
     testUsingContext('fails when file exists', () async {
       Cache.flutterRoot = '../..';
       CreateCommand command = new CreateCommand();
-      CommandRunner runner = createTestCommandRunner(command);
+      CommandRunner<Null> runner = createTestCommandRunner(command);
       File existingFile = new File("${temp.path.toString()}/bad");
       if (!existingFile.existsSync()) existingFile.createSync();
-      int code = await runner.run(<String>['create', existingFile.path]);
-      expect(code, 1);
+      try {
+        await runner.run(<String>['create', existingFile.path]);
+        fail('expected ToolExit exception');
+      } on ToolExit catch (e) {
+        expect(e.message, contains('file exists'));
+      }
     });
   });
 }
@@ -110,12 +116,11 @@ void main() {
 Future<Null> _createAndAnalyzeProject(Directory dir, List<String> createArgs) async {
   Cache.flutterRoot = '../..';
   CreateCommand command = new CreateCommand();
-  CommandRunner runner = createTestCommandRunner(command);
+  CommandRunner<Null> runner = createTestCommandRunner(command);
   List<String> args = <String>['create'];
   args.addAll(createArgs);
   args.add(dir.path);
-  int code = await runner.run(args);
-  expect(code, 0);
+  await runner.run(args);
 
   String mainPath = path.join(dir.path, 'lib', 'main.dart');
   expect(new File(mainPath).existsSync(), true);

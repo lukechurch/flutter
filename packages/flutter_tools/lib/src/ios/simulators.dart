@@ -315,7 +315,7 @@ class IOSSimulator extends Device {
   @override
   bool get supportsHotMode => true;
 
-  _IOSSimulatorLogReader _logReader;
+  Map<ApplicationPackage, _IOSSimulatorLogReader> _logReaders;
   _IOSSimulatorDevicePortForwarder _portForwarder;
 
   String get xcrunPath => path.join('/usr', 'bin', 'xcrun');
@@ -421,14 +421,18 @@ class IOSSimulator extends Device {
     if (!prebuiltApplication) {
       printTrace('Building ${app.name} for $id.');
 
-      if (!(await _setupUpdatedApplicationBundle(app)))
+      try {
+        await _setupUpdatedApplicationBundle(app);
+      } on ToolExit {
         return new LaunchResult.failed();
+      }
     }
 
     ProtocolDiscovery observatoryDiscovery;
 
     if (debuggingOptions.debuggingEnabled)
-      observatoryDiscovery = new ProtocolDiscovery(logReader, ProtocolDiscovery.kObservatoryService);
+      observatoryDiscovery = new ProtocolDiscovery(getLogReader(app: app),
+                                                   ProtocolDiscovery.kObservatoryService);
 
     // Prepare launch arguments.
     List<String> args = <String>[];
@@ -496,45 +500,33 @@ class IOSSimulator extends Device {
     return isInstalled && isRunning;
   }
 
-  Future<bool> _setupUpdatedApplicationBundle(ApplicationPackage app) async {
-    bool sideloadResult = await _sideloadUpdatedAssetsForInstalledApplicationBundle(app);
-
-    if (!sideloadResult)
-      return false;
+  Future<Null> _setupUpdatedApplicationBundle(ApplicationPackage app) async {
+    await _sideloadUpdatedAssetsForInstalledApplicationBundle(app);
 
     if (!_applicationIsInstalledAndRunning(app))
       return _buildAndInstallApplicationBundle(app);
-
-    return true;
   }
 
-  Future<bool> _buildAndInstallApplicationBundle(ApplicationPackage app) async {
+  Future<Null> _buildAndInstallApplicationBundle(ApplicationPackage app) async {
     // Step 1: Build the Xcode project.
     // The build mode for the simulator is always debug.
     XcodeBuildResult buildResult = await buildXcodeProject(app: app, mode: BuildMode.debug, buildForDevice: false);
-    if (!buildResult.success) {
-      printError('Could not build the application for the simulator.');
-      return false;
-    }
+    if (!buildResult.success)
+      throwToolExit('Could not build the application for the simulator.');
 
     // Step 2: Assert that the Xcode project was successfully built.
     IOSApp iosApp = app;
     Directory bundle = new Directory(iosApp.simulatorBundlePath);
     bool bundleExists = await bundle.exists();
-    if (!bundleExists) {
-      printError('Could not find the built application bundle at ${bundle.path}.');
-      return false;
-    }
+    if (!bundleExists)
+      throwToolExit('Could not find the built application bundle at ${bundle.path}.');
 
     // Step 3: Install the updated bundle to the simulator.
     SimControl.instance.install(id, path.absolute(bundle.path));
-    return true;
   }
 
-  Future<bool> _sideloadUpdatedAssetsForInstalledApplicationBundle(
-      ApplicationPackage app) async {
-    return (await flx.build(precompiledSnapshot: true)) == 0;
-  }
+  Future<Null> _sideloadUpdatedAssetsForInstalledApplicationBundle(ApplicationPackage app) =>
+      flx.build(precompiledSnapshot: true);
 
   @override
   Future<bool> stopApp(ApplicationPackage app) async {
@@ -563,11 +555,9 @@ class IOSSimulator extends Device {
   String get sdkNameAndVersion => category;
 
   @override
-  DeviceLogReader get logReader {
-    if (_logReader == null)
-      _logReader = new _IOSSimulatorLogReader(this);
-
-    return _logReader;
+  DeviceLogReader getLogReader({ApplicationPackage app}) {
+    _logReaders ??= <ApplicationPackage, _IOSSimulatorLogReader>{};
+    return _logReaders.putIfAbsent(app, () => new _IOSSimulatorLogReader(this, app));
   }
 
   @override
@@ -638,13 +628,16 @@ class IOSSimulator extends Device {
 }
 
 class _IOSSimulatorLogReader extends DeviceLogReader {
-  _IOSSimulatorLogReader(this.device) {
+  String _appName;
+
+  _IOSSimulatorLogReader(this.device, ApplicationPackage app) {
     _linesController = new StreamController<String>.broadcast(
       onListen: () {
         _start();
       },
       onCancel: _stop
     );
+    _appName = app == null ? null : app.name.replaceAll('.app', '');
   }
 
   final IOSSimulator device;
@@ -721,8 +714,9 @@ class _IOSSimulatorLogReader extends DeviceLogReader {
            && content.endsWith(']: 0x1'))
          return null;
 
-      if (category == 'Runner')
+      if (_appName != null && category == _appName) {
         return content;
+      }
       return '$category: $content';
     }
     match = _lastMessageSingleRegex.matchAsPrefix(string);

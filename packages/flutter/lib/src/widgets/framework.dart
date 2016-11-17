@@ -1436,7 +1436,7 @@ abstract class BuildContext {
   ///
   /// This getter will only return a valid result if [findRenderObject] actually
   /// returns a [RenderBox]. If [findRenderObject] returns a render object that
-  /// is not a subtype of [RenderBox] (e.g., [RenderView], this getter will
+  /// is not a subtype of [RenderBox] (e.g., [RenderView]), this getter will
   /// throw an exception in checked mode and will return null in release mode.
   ///
   /// Calling this getter is theoretically relatively expensive (O(N) in the
@@ -1937,7 +1937,10 @@ abstract class Element implements BuildContext {
   int get depth => _depth;
   int _depth;
 
-  static int _sort(BuildableElement a, BuildableElement b) {
+  /// Returns true if the element has been marked as needing rebuilding.
+  bool get dirty => false;
+
+  static int _sort(Element a, Element b) {
     if (a.depth < b.depth)
       return -1;
     if (b.depth < a.depth)
@@ -2000,6 +2003,9 @@ abstract class Element implements BuildContext {
 
   /// Calls the argument for each child. Must be overridden by subclasses that
   /// support having children.
+  ///
+  /// There is no guaranteed order in which the children will be visited, though
+  /// it should be consistent over time.
   void visitChildren(ElementVisitor visitor) { }
 
   /// Calls the argument for each child that is relevant for semantics. By
@@ -2015,38 +2021,37 @@ abstract class Element implements BuildContext {
     visitChildren(visitor);
   }
 
-  /// Remove the given child.
+  /// Update the given child with the given new configuration.
   ///
-  /// This updates the child model such that [visitChildren] does not walk that
-  /// child anymore.
+  /// This method is the core of the widgets system. It is called each time we
+  /// are to add, update, or remove a child based on an updated configuration.
   ///
-  /// The element must have already been deactivated when this is called,
-  /// meaning that its parent should be null.
-  @protected
-  void detachChild(Element child);
-
-  /// This method is the core of the system.
+  /// If the `child` is null, and the `newWidget` is not null, then we have a new
+  /// child for which we need to create an [Element], configured with `newWidget`.
   ///
-  /// It is called each time we are to add, update, or remove a child based on
-  /// an updated configuration.
-  ///
-  /// If the child is null, and the newWidget is not null, then we have a new
-  /// child for which we need to create an Element, configured with newWidget.
-  ///
-  /// If the newWidget is null, and the child is not null, then we need to
+  /// If the `newWidget` is null, and the `child` is not null, then we need to
   /// remove it because it no longer has a configuration.
   ///
-  /// If neither are null, then we need to update the child's configuration to
-  /// be the new configuration given by newWidget. If newWidget can be given to
-  /// the existing child, then it is so given. Otherwise, the old child needs
-  /// to be disposed and a new child created for the new configuration.
+  /// If neither are null, then we need to update the `child`'s configuration to
+  /// be the new configuration given by `newWidget`. If `newWidget` can be given
+  /// to the existing child (as determined by [Widget.canUpdate]), then it is so
+  /// given. Otherwise, the old child needs to be disposed and a new child
+  /// created for the new configuration.
   ///
-  /// If both are null, then we don't have a child and won't have a child, so
-  /// we do nothing.
+  /// If both are null, then we don't have a child and won't have a child, so we
+  /// do nothing.
   ///
-  /// The updateChild() method returns the new child, if it had to create one,
+  /// The [updateChild] method returns the new child, if it had to create one,
   /// or the child that was passed in, if it just had to update the child, or
   /// null, if it removed the child and did not replace it.
+  ///
+  /// The following table summarises the above:
+  ///
+  /// <table>
+  /// <tr><th><th>`newWidget == null`<th>`newWidget != null`
+  /// <tr><th>`child == null`<td>Returns null.<td>Returns new [Element].
+  /// <tr><th>`child != null`<td>Old child is removed, returns null.<td>Old child updated if possible, returns child or new [Element].
+  /// </table>
   @protected
   Element updateChild(Element child, Widget newWidget, dynamic newSlot) {
     if (newWidget == null) {
@@ -2164,9 +2169,11 @@ abstract class Element implements BuildContext {
   /// Remove [renderObject] from the render tree.
   ///
   /// The default implementation of this function simply calls
-  /// [detachRenderObject] recursively on its children. The
+  /// [detachRenderObject] recursively on its child. The
   /// [RenderObjectElement.detachRenderObject] override does the actual work of
   /// removing [renderObject] from the render tree.
+  ///
+  /// This is called by [deactivateChild].
   void detachRenderObject() {
     visitChildren((Element child) {
       child.detachRenderObject();
@@ -2177,7 +2184,7 @@ abstract class Element implements BuildContext {
   /// Add [renderObject] to the render tree at the location specified by [slot].
   ///
   /// The default implementation of this function simply calls
-  /// [attachRenderObject] recursively on its children. The
+  /// [attachRenderObject] recursively on its child. The
   /// [RenderObjectElement.attachRenderObject] override does the actual work of
   /// adding [renderObject] to the render tree.
   void attachRenderObject(dynamic newSlot) {
@@ -2201,15 +2208,16 @@ abstract class Element implements BuildContext {
     });
     final Element parent = element._parent;
     if (parent != null) {
+      parent.forgetChild(element);
       parent.deactivateChild(element);
-      parent.detachChild(element);
     }
     assert(element._parent == null);
     owner._inactiveElements.remove(element);
     return element;
   }
 
-  /// Create an element for the given widget and add it as a child of this element in the given slot.
+  /// Create an element for the given widget and add it as a child of this
+  /// element in the given slot.
   ///
   /// This method is typically called by [updateChild] but can be called
   /// directly by subclasses that need finer-grained control over creating
@@ -2255,13 +2263,20 @@ abstract class Element implements BuildContext {
     });
   }
 
-  /// Move the given element to the list of inactive elements.
+  /// Move the given element to the list of inactive elements and detach its
+  /// render object from the render tree.
   ///
   /// This method stops the given element from being a child of this element by
   /// detaching its render object from the render tree and moving the element to
   /// the list of inactive elements.
   ///
-  /// The caller is responsible from removing the child from its child model.
+  /// This method (indirectly) calls [deactivate] on the child.
+  ///
+  /// The caller is responsible for removing the child from its child model.
+  /// Typically [deactivateChild] is called by the element itself while it is
+  /// updating its child model; however, during [GlobalKey] reparenting, the new
+  /// parent proactively calls the old parent's [deactivateChild], first using
+  /// [forgetChild] to cause the old parent to update its child model.
   @protected
   void deactivateChild(Element child) {
     assert(child != null);
@@ -2277,6 +2292,17 @@ abstract class Element implements BuildContext {
       return true;
     });
   }
+
+  /// Remove the given child from the element's child list, in preparation for
+  /// the child being reused elsewhere in the element tree.
+  ///
+  /// This updates the child model such that, e.g., [visitChildren] does not
+  /// walk that child anymore.
+  ///
+  /// The element will still have a valid parent when this is called. After this
+  /// is called, [deactivateChild] is called to sever the link to this object.
+  @protected
+  void forgetChild(Element child);
 
   void _activateWithParent(Element parent, dynamic newSlot) {
     assert(_debugLifecycleState == _ElementLifecycle.inactive);
@@ -2332,6 +2358,8 @@ abstract class Element implements BuildContext {
   /// animation frame, if the element has not be reactivated, the framework will
   /// unmount the element.
   ///
+  /// This is (indirectly) called by [deactivateChild].
+  ///
   /// See the lifecycle documentation for [Element] for additional information.
   @mustCallSuper
   void deactivate() {
@@ -2354,7 +2382,9 @@ abstract class Element implements BuildContext {
     assert(() { _debugLifecycleState = _ElementLifecycle.inactive; return true; });
   }
 
-  /// Called after children have been deactivated (see [deactivate]).
+  /// Called, in debug mode, after children have been deactivated (see [deactivate]).
+  ///
+  /// This method is not called in release builds.
   @mustCallSuper
   void debugDeactivated() {
     assert(_debugLifecycleState == _ElementLifecycle.inactive);
@@ -2604,8 +2634,8 @@ abstract class Element implements BuildContext {
     if (children.length > 0) {
       Element last = children.removeLast();
       for (Element child in children)
-        result += '${child.toStringDeep("$prefixOtherLines \u251C", "$prefixOtherLines \u2502")}';
-      result += '${last.toStringDeep("$prefixOtherLines \u2514", "$prefixOtherLines  ")}';
+        result += '${child.toStringDeep("$prefixOtherLines\u251C", "$prefixOtherLines\u2502")}';
+      result += '${last.toStringDeep("$prefixOtherLines\u2514", "$prefixOtherLines ")}';
     }
     return result;
   }
@@ -2652,6 +2682,7 @@ abstract class BuildableElement extends Element {
   BuildableElement(Widget widget) : super(widget);
 
   /// Returns true if the element has been marked as needing rebuilding.
+  @override
   bool get dirty => _dirty;
   bool _dirty = true;
 
@@ -2897,13 +2928,13 @@ abstract class ComponentElement extends BuildableElement {
   }
 
   @override
-  void detachChild(Element child) {
+  void forgetChild(Element child) {
     assert(child == _child);
     _child = null;
   }
 }
 
-/// An element that uses a [StatelessWidget] as its configuration.
+/// An [Element] that uses a [StatelessWidget] as its configuration.
 class StatelessElement extends ComponentElement {
   /// Creates an element that uses the given widget as its configuration.
   StatelessElement(StatelessWidget widget) : super(widget) {
@@ -2929,7 +2960,7 @@ class StatelessElement extends ComponentElement {
   }
 }
 
-/// An element that uses a [StatefulWidget] as its configuration.
+/// An [Element] that uses a [StatefulWidget] as its configuration.
 class StatefulElement extends ComponentElement {
   /// Creates an element that uses the given widget as its configuration.
   StatefulElement(StatefulWidget widget)
@@ -3091,7 +3122,7 @@ class StatefulElement extends ComponentElement {
   }
 }
 
-/// An element that uses a [ProxyElement] as its configuration.
+/// An [Element] that uses a [ProxyElement] as its configuration.
 abstract class ProxyElement extends ComponentElement {
   /// Initializes fields for subclasses.
   ProxyElement(ProxyWidget widget) : super(widget) {
@@ -3129,7 +3160,7 @@ abstract class ProxyElement extends ComponentElement {
   void notifyClients(@checked ProxyWidget oldWidget);
 }
 
-/// An element that uses a [ParentDataWidget] as its configuration.
+/// An [Element] that uses a [ParentDataWidget] as its configuration.
 class ParentDataElement<T extends RenderObjectWidget> extends ProxyElement {
   /// Creates an element that uses the given widget as its configuration.
   ParentDataElement(ParentDataWidget<T> widget) : super(widget);
@@ -3182,7 +3213,7 @@ class ParentDataElement<T extends RenderObjectWidget> extends ProxyElement {
   }
 }
 
-/// An element that uses a [InheritedWidget] as its configuration.
+/// An [Element] that uses a [InheritedWidget] as its configuration.
 class InheritedElement extends ProxyElement {
   /// Creates an element that uses the given widget as its configuration.
   InheritedElement(InheritedWidget widget) : super(widget);
@@ -3243,13 +3274,171 @@ class InheritedElement extends ProxyElement {
   }
 }
 
-/// An element that uses a [RenderObjectWidget] as its configuration.
+/// An [Element] that uses a [RenderObjectWidget] as its configuration.
 ///
 /// [RenderObjectElement] objects have an associated [RenderObject] widget in
 /// the render tree, which handles concrete operations like laying out,
 /// painting, and hit testing.
 ///
 /// Contrast with [ComponentElement].
+///
+/// For details on the lifecycle of an element, see the discussion at [Element].
+///
+/// ## Writing a RenderObjectElement subclass
+///
+/// There are three common child models used by most [RenderObject]s:
+///
+/// * Leaf render objects, with no children: The [LeafRenderObjectElement] class
+///   handles this case.
+///
+/// * A single child: The [SingleChildRenderObjectElement] class handles this
+///   case.
+///
+/// * A linked list of children: The [MultiChildRenderObjectElement] class
+///   handles this case.
+///
+/// Sometimes, however, a render object's child model is more complicated. Maybe
+/// it has a two-dimensional array of children. Maybe it constructs children on
+/// demand. Maybe it features multiple lists. In such situations, the
+/// corresponding [Element] for the [Widget] that configures that [RenderObject]
+/// will be a new subclass of [RenderObjectElement].
+///
+/// Such a subclass is responsible for managing children, specifically the
+/// [Element] children of this object, and the [RenderObject] children of its
+/// corresponding [RenderObject].
+///
+/// ### Specializing the getters
+///
+/// [RenderObjectElement] objects spend much of their time acting as
+/// intermediaries between their [widget] and their [renderObject]. To make this
+/// more tractable, most [RenderObjectElement] subclasses override these getters
+/// so that they return the specific type that the element expects, e.g.:
+///
+/// ```dart
+/// class FooElement extends RenderObjectElement {
+///
+///   @override
+///   Foo get widget => super.widget;
+///
+///   @override
+///   RenderFoo get renderObject => super.renderObject;
+///
+///   // ...
+/// }
+/// ```
+///
+/// ### Slots
+///
+/// Each child [Element] corresponds to a [RenderObject] which should be
+/// attached to this element's render object as a child.
+///
+/// However, the immediate children of the element may not be the ones that
+/// eventually produce the actual [RenderObject] that they correspond to. For
+/// example a [StatelessElement] (the element of a [StatelessWidget]) simply
+/// corresponds to whatever [RenderObject] its child (the element returned by
+/// its [StatelessWidget.build] method) corresponds to.
+///
+/// Each child is therefore assigned a _slot_ token. This is an identifier whose
+/// meaning is private to this [RenderObjectElement] node. When the descendant
+/// that finally produces the [RenderObject] is ready to attach it to this
+/// node's render object, it passes that slot token back to this node, and that
+/// allows this node to cheaply identify where to put the child render object
+/// relative to the others in the parent render object.
+///
+/// ### Updating children
+///
+/// Early in the lifecycle of an element, the framework calls the [mount]
+/// method. This method should call [inflateChild] for each child, passing in
+/// the widget for that child, and the slot for that child, thus obtaining a
+/// list of child [Element]s.
+///
+/// Subsequently, the framework will call the [update] method. In this method,
+/// the [RenderObjectElement] should call [updateChild] for each child, passing
+/// in the [Element] that was obtained during [mount] or the last time [update]
+/// was run (whichever happened most recently), the new [Widget], and the slot.
+/// This provides the object with a new list of [Element] objects.
+///
+/// Where possible, the [update] method should attempt to map the elements from
+/// the last pass to the widgets in the new pass. For example, if one of the
+/// elements from the last pass was configured with a particular [Key], and one
+/// of the widgets in this new pass has that same key, they should be paired up,
+/// and the old element should be updated with the widget (and the slot
+/// corresponding to the new widget's new position, also). The [updateChildren]
+/// method may be useful in this regard.
+///
+/// [updateChild] should be called for children in their logical order. The
+/// order can matter; for example, if two of the children use [Focus.at]'s
+/// `autofocus` feature in their build method, then the first one to be updated
+/// will gain the focus.
+///
+/// #### Dynamically determining the children during the build phase
+///
+/// The child widgets need not necessarily come from this element's widget
+/// verbatim. They could be generated dynamically from a callback, or generated
+/// in other more creative ways.
+///
+/// #### Dynamically determining the children during layout
+///
+/// If the widgets are to be generated at layout time, then generating them when
+/// the [update] method won't work: layout of this element's render object
+/// hasn't started yet at that point. Instead, the [update] method can mark the
+/// render object as needing layout (see [RenderObject.markNeedsLayout]), and
+/// then the render object's [performLayout] method can call back to the element
+/// to have it generate the widgets and call [updateChild] accordingly.
+///
+/// For a render object to call an element during layout, it must use
+/// [RenderObject.invokeLayoutCallback]. For an element to call [updateChild]
+/// outside of its [update] method, it must use [BuildOwner.buildScope].
+///
+/// The framework provides many more checks in normal operation than it does
+/// when doing a build during layout. For this reason, creating widgets with
+/// layout-time build semantics should be done with great care.
+///
+/// #### Handling errors when building
+///
+/// If an element calls a builder function to obtain widgets for its children,
+/// it may find that the build throws an exception. Such exceptions should be
+/// caught and reported using [FlutterError.reportError]. If a child is needed
+/// but a builder has failed in this way, an instance of [ErrorWidget] can be
+/// used instead.
+///
+/// ### Detaching children
+///
+/// It is possible, when using [GlobalKey]s, for a child to be proactively
+/// removed by another element before this element has been updated.
+/// (Specifically, this happens when the subtree rooted at a widget with a
+/// particular [GlobalKey] is being moved from this element to an element
+/// processed earlier in the build phase.) When this happens, this element's
+/// [forgetChild] method will be called with a reference to the affected child
+/// element.
+///
+/// The [forgetChild] method of a [RenderObjectElement] subclass must remove the
+/// child element from its child list, so that when it next [update]s its
+/// children, the removed child is not considered.
+///
+/// For performance reasons, if there are many elements, it may be quicker to
+/// track which elements were forgotten by storing them in a [Set], rather than
+/// proactively mutating the local record of the child list and the identities
+/// of all the slots. For example, see the implementation of
+/// [MultiChildRenderObjectElement].
+///
+/// ### Maintaining the render object tree
+///
+/// Once a descendant produces a render object, it will call
+/// [insertChildRenderObject]. If the descendant's slot changes identity, it
+/// will call [moveChildRenderObject]. If a descendant goes away, it will call
+/// [removeChildRenderObject].
+///
+/// These three methods should update the render tree accordingly, attaching,
+/// moving, and detaching the given child render object from this element's own
+/// render object respectively.
+///
+/// ### Walking the children
+///
+/// If a [RenderObjectElement] object has any children [Element]s, it must
+/// expose them in its implementation of the [visitChildren] method. This method
+/// is used by many of the framework's internal mechanisms, and so should be
+/// fast. It is also used by the test framework and [debugDumpApp].
 abstract class RenderObjectElement extends BuildableElement {
   /// Creates an element that uses the given widget as its configuration.
   RenderObjectElement(RenderObjectWidget widget) : super(widget);
@@ -3301,7 +3490,10 @@ abstract class RenderObjectElement extends BuildableElement {
   }
 
   void _debugUpdateRenderObjectOwner() {
-    _renderObject.debugCreator = debugGetCreatorChain(10);
+    assert(() {
+      _renderObject.debugCreator = new _DebugCreator(this);
+      return true;
+    });
   }
 
   @override
@@ -3318,22 +3510,22 @@ abstract class RenderObjectElement extends BuildableElement {
   ///
   /// During this function the `oldChildren` list must not be modified. If the
   /// caller wishes to remove elements from `oldChildren` re-entrantly while
-  /// this function is on the stack, the caller can supply a `detachedChildren`
+  /// this function is on the stack, the caller can supply a `forgottenChildren`
   /// argument, which can be modified while this function is on the stack.
   /// Whenever this function reads from `oldChildren`, this function first
-  /// checks whether the child is in `detachedChildren`. If it is, the function
+  /// checks whether the child is in `forgottenChildren`. If it is, the function
   /// acts as if the child was not in `oldChildren`.
   ///
   /// This function is a convienence wrapper around [updateChild], which updates
   /// each individual child. When calling [updateChild], this function uses the
   /// previous element as the `newSlot` argument.
   @protected
-  List<Element> updateChildren(List<Element> oldChildren, List<Widget> newWidgets, { Set<Element> detachedChildren }) {
+  List<Element> updateChildren(List<Element> oldChildren, List<Widget> newWidgets, { Set<Element> forgottenChildren }) {
     assert(oldChildren != null);
     assert(newWidgets != null);
 
-    Element replaceWithNullIfDetached(Element child) {
-      return detachedChildren != null && detachedChildren.contains(child) ? null : child;
+    Element replaceWithNullIfForgotten(Element child) {
+      return forgottenChildren != null && forgottenChildren.contains(child) ? null : child;
     }
 
     // This attempts to diff the new child list (this.children) with
@@ -3378,7 +3570,7 @@ abstract class RenderObjectElement extends BuildableElement {
 
     // Update the top of the list.
     while ((oldChildrenTop <= oldChildrenBottom) && (newChildrenTop <= newChildrenBottom)) {
-      Element oldChild = replaceWithNullIfDetached(oldChildren[oldChildrenTop]);
+      Element oldChild = replaceWithNullIfForgotten(oldChildren[oldChildrenTop]);
       Widget newWidget = newWidgets[newChildrenTop];
       assert(oldChild == null || oldChild._debugLifecycleState == _ElementLifecycle.active);
       if (oldChild == null || !Widget.canUpdate(oldChild.widget, newWidget))
@@ -3393,7 +3585,7 @@ abstract class RenderObjectElement extends BuildableElement {
 
     // Scan the bottom of the list.
     while ((oldChildrenTop <= oldChildrenBottom) && (newChildrenTop <= newChildrenBottom)) {
-      Element oldChild = replaceWithNullIfDetached(oldChildren[oldChildrenBottom]);
+      Element oldChild = replaceWithNullIfForgotten(oldChildren[oldChildrenBottom]);
       Widget newWidget = newWidgets[newChildrenBottom];
       assert(oldChild == null || oldChild._debugLifecycleState == _ElementLifecycle.active);
       if (oldChild == null || !Widget.canUpdate(oldChild.widget, newWidget))
@@ -3408,7 +3600,7 @@ abstract class RenderObjectElement extends BuildableElement {
     if (haveOldChildren) {
       oldKeyedChildren = new Map<Key, Element>();
       while (oldChildrenTop <= oldChildrenBottom) {
-        Element oldChild = replaceWithNullIfDetached(oldChildren[oldChildrenTop]);
+        Element oldChild = replaceWithNullIfForgotten(oldChildren[oldChildrenTop]);
         assert(oldChild == null || oldChild._debugLifecycleState == _ElementLifecycle.active);
         if (oldChild != null) {
           if (oldChild.widget.key != null)
@@ -3459,7 +3651,7 @@ abstract class RenderObjectElement extends BuildableElement {
     // Update the bottom of the list.
     while ((oldChildrenTop <= oldChildrenBottom) && (newChildrenTop <= newChildrenBottom)) {
       Element oldChild = oldChildren[oldChildrenTop];
-      assert(replaceWithNullIfDetached(oldChild) != null);
+      assert(replaceWithNullIfForgotten(oldChild) != null);
       assert(oldChild._debugLifecycleState == _ElementLifecycle.active);
       Widget newWidget = newWidgets[newChildrenTop];
       assert(Widget.canUpdate(oldChild.widget, newWidget));
@@ -3475,7 +3667,7 @@ abstract class RenderObjectElement extends BuildableElement {
     // clean up any of the remaining middle nodes from the old list
     if (haveOldChildren && oldKeyedChildren.isNotEmpty) {
       for (Element oldChild in oldKeyedChildren.values) {
-        if (detachedChildren == null || !detachedChildren.contains(oldChild))
+        if (forgottenChildren == null || !forgottenChildren.contains(oldChild))
           deactivateChild(oldChild);
       }
     }
@@ -3593,13 +3785,13 @@ abstract class RootRenderObjectElement extends RenderObjectElement {
   }
 }
 
-/// An element that uses a [LeafRenderObjectWidget] as its configuration.
+/// An [Element] that uses a [LeafRenderObjectWidget] as its configuration.
 class LeafRenderObjectElement extends RenderObjectElement {
   /// Creates an element that uses the given widget as its configuration.
   LeafRenderObjectElement(LeafRenderObjectWidget widget): super(widget);
 
   @override
-  void detachChild(Element child) {
+  void forgetChild(Element child) {
     assert(false);
   }
 
@@ -3619,7 +3811,7 @@ class LeafRenderObjectElement extends RenderObjectElement {
   }
 }
 
-/// An element that uses a [SingleChildRenderObjectWidget] as its configuration.
+/// An [Element] that uses a [SingleChildRenderObjectWidget] as its configuration.
 ///
 /// The child is optional.
 ///
@@ -3642,7 +3834,7 @@ class SingleChildRenderObjectElement extends RenderObjectElement {
   }
 
   @override
-  void detachChild(Element child) {
+  void forgetChild(Element child) {
     assert(child == _child);
     _child = null;
   }
@@ -3682,7 +3874,7 @@ class SingleChildRenderObjectElement extends RenderObjectElement {
   }
 }
 
-/// An element that uses a [MultiChildRenderObjectWidget] as its configuration.
+/// An [Element] that uses a [MultiChildRenderObjectWidget] as its configuration.
 ///
 /// This element subclass can be used for RenderObjectWidgets whose
 /// RenderObjects use the [ContainerRenderObjectMixin] mixin with a parent data
@@ -3698,9 +3890,9 @@ class MultiChildRenderObjectElement extends RenderObjectElement {
   MultiChildRenderObjectWidget get widget => super.widget;
 
   List<Element> _children;
-  // We keep a set of detached children to avoid O(n^2) work walking _children
+  // We keep a set of forgotten children to avoid O(n^2) work walking _children
   // repeatedly to remove children.
-  final Set<Element> _detachedChildren = new HashSet<Element>();
+  final Set<Element> _forgottenChildren = new HashSet<Element>();
 
   @override
   void insertChildRenderObject(RenderObject child, Element slot) {
@@ -3728,16 +3920,16 @@ class MultiChildRenderObjectElement extends RenderObjectElement {
   @override
   void visitChildren(ElementVisitor visitor) {
     for (Element child in _children) {
-      if (!_detachedChildren.contains(child))
+      if (!_forgottenChildren.contains(child))
         visitor(child);
     }
   }
 
   @override
-  void detachChild(Element child) {
+  void forgetChild(Element child) {
     assert(_children.contains(child));
-    assert(!_detachedChildren.contains(child));
-    _detachedChildren.add(child);
+    assert(!_forgottenChildren.contains(child));
+    _forgottenChildren.add(child);
   }
 
   @override
@@ -3756,9 +3948,16 @@ class MultiChildRenderObjectElement extends RenderObjectElement {
   void update(MultiChildRenderObjectWidget newWidget) {
     super.update(newWidget);
     assert(widget == newWidget);
-    _children = updateChildren(_children, widget.children, detachedChildren: _detachedChildren);
-    _detachedChildren.clear();
+    _children = updateChildren(_children, widget.children, forgottenChildren: _forgottenChildren);
+    _forgottenChildren.clear();
   }
+}
+
+class _DebugCreator {
+  _DebugCreator(this.element);
+  final RenderObjectElement element;
+  @override
+  String toString() => element.debugGetCreatorChain(12);
 }
 
 void _debugReportException(String context, dynamic exception, StackTrace stack, {

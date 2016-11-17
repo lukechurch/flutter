@@ -5,7 +5,6 @@
 import 'dart:async';
 import 'dart:io';
 
-import '../application_package.dart';
 import '../base/common.dart';
 import '../base/utils.dart';
 import '../build_info.dart';
@@ -14,14 +13,10 @@ import '../device.dart';
 import '../globals.dart';
 import '../hot.dart';
 import '../ios/mac.dart';
-import '../vmservice.dart';
 import '../resident_runner.dart';
 import '../run.dart';
 import '../runner/flutter_command.dart';
-import 'build_apk.dart';
 import 'daemon.dart';
-import 'install.dart';
-import 'trace.dart';
 
 abstract class RunCommandBase extends FlutterCommand {
   RunCommandBase() {
@@ -68,9 +63,12 @@ class RunCommand extends RunCommandBase {
     argParser.addOption('packages',
         hide: !verboseHelp,
         help: 'Specify the path to the .packages file.');
-    argParser.addOption('project_root',
+    argParser.addOption('project-root',
         hide: !verboseHelp,
         help: 'Specify the project root directory.');
+    argParser.addOption('project-assets',
+        hide: !verboseHelp,
+        help: 'Specify the project assets relative to the root directory.');
     argParser.addFlag('machine',
         hide: !verboseHelp,
         help: 'Handle machine structured JSON command input\n'
@@ -100,12 +98,11 @@ class RunCommand extends RunCommandBase {
     argParser.addFlag('benchmark', negatable: false, hide: !verboseHelp);
 
     commandValidator = () {
-      if (!runningWithPrebuiltApplication) {
-        return commonCommandValidator();
-      }
+      if (!runningWithPrebuiltApplication)
+        commonCommandValidator();
+
       // When running with a prebuilt application, no command validation is
       // necessary.
-      return true;
     };
   }
 
@@ -154,17 +151,16 @@ class RunCommand extends RunCommandBase {
       argResults['use-application-binary'] != null;
 
   @override
-  Future<int> verifyThenRunCommand() async {
-    if (!commandValidator())
-      return 1;
+  Future<Null> verifyThenRunCommand() async {
+    commandValidator();
     device = await findTargetDevice();
     if (device == null)
-      return 1;
+      throwToolExit(null);
     return super.verifyThenRunCommand();
   }
 
   @override
-  Future<int> runCommand() async {
+  Future<Null> runCommand() async {
 
     Cache.releaseLockEarly();
 
@@ -178,7 +174,9 @@ class RunCommand extends RunCommandBase {
       AppInstance app = daemon.appDomain.startApp(
         device, Directory.current.path, targetFile, route,
         getBuildMode(), argResults['start-paused'], hotMode);
-      return app.runner.waitForAppToFinish();
+      int result = await app.runner.waitForAppToFinish();
+      if (result != 0)
+        throwToolExit(null, exitCode: result);
     }
 
     int debugPort;
@@ -186,15 +184,12 @@ class RunCommand extends RunCommandBase {
       try {
         debugPort = int.parse(argResults['debug-port']);
       } catch (error) {
-        printError('Invalid port for `--debug-port`: $error');
-        return 1;
+        throwToolExit('Invalid port for `--debug-port`: $error');
       }
     }
 
-    if (device.isLocalEmulator && !isEmulatorBuildMode(getBuildMode())) {
-      printError('${toTitleCase(getModeName(getBuildMode()))} mode is not supported for emulators.');
-      return 1;
-    }
+    if (device.isLocalEmulator && !isEmulatorBuildMode(getBuildMode()))
+      throwToolExit('${toTitleCase(getModeName(getBuildMode()))} mode is not supported for emulators.');
 
     DebuggingOptions options;
 
@@ -209,11 +204,8 @@ class RunCommand extends RunCommandBase {
     }
 
     if (hotMode) {
-      if (!device.supportsHotMode) {
-        printError('Hot mode is not supported by this device. '
-                   'Run with --no-hot.');
-        return 1;
-      }
+      if (!device.supportsHotMode)
+        throwToolExit('Hot mode is not supported by this device. Run with --no-hot.');
     }
 
     String pidFile = argResults['pid-file'];
@@ -230,8 +222,9 @@ class RunCommand extends RunCommandBase {
         debuggingOptions: options,
         benchmarkMode: argResults['benchmark'],
         applicationBinary: argResults['use-application-binary'],
-        projectRootPath: argResults['project_root'],
+        projectRootPath: argResults['project-root'],
         packagesFilePath: argResults['packages'],
+        projectAssets: argResults['project-assets']
       );
     } else {
       runner = new RunAndStayResident(
@@ -239,113 +232,15 @@ class RunCommand extends RunCommandBase {
         target: targetFile,
         debuggingOptions: options,
         traceStartup: traceStartup,
-        benchmark: argResults['benchmark'],
         applicationBinary: argResults['use-application-binary']
       );
     }
 
-    return runner.run(route: route, shouldBuild: !runningWithPrebuiltApplication && argResults['build']);
-  }
-}
-
-Future<int> startApp(
-  Device device, {
-  String target,
-  bool stop: true,
-  bool install: true,
-  DebuggingOptions debuggingOptions,
-  bool traceStartup: false,
-  bool benchmark: false,
-  String route,
-  BuildMode buildMode: BuildMode.debug
-}) async {
-  String mainPath = findMainDartFile(target);
-  if (!FileSystemEntity.isFileSync(mainPath)) {
-    String message = 'Tried to run $mainPath, but that file does not exist.';
-    if (target == null)
-      message += '\nConsider using the -t option to specify the Dart file to start.';
-    printError(message);
-    return 1;
-  }
-
-  ApplicationPackage package = getApplicationPackageForPlatform(device.platform);
-
-  if (package == null) {
-    String message = 'No application found for ${device.platform}.';
-    String hint = getMissingPackageHintForPlatform(device.platform);
-    if (hint != null)
-      message += '\n$hint';
-    printError(message);
-    return 1;
-  }
-
-  Stopwatch stopwatch = new Stopwatch()..start();
-
-  // TODO(devoncarew): We shouldn't have to do type checks here.
-  if (install && device is AndroidDevice) {
-    printTrace('Running build command.');
-
-    int result = await buildApk(
-      device.platform,
-      target: target,
-      buildMode: buildMode
+    int result = await runner.run(
+      route: route,
+      shouldBuild: !runningWithPrebuiltApplication && argResults['build'],
     );
-
     if (result != 0)
-      return result;
+      throwToolExit(null, exitCode: result);
   }
-
-  // TODO(devoncarew): Move this into the device.startApp() impls. They should
-  // wait on the stop command to complete before (re-)starting the app. We could
-  // plumb a Future through the start command from here, but that seems a little
-  // messy.
-  if (stop) {
-    if (package != null) {
-      printTrace('Stopping app "${package.name}" on ${device.name}.');
-      await device.stopApp(package);
-    }
-  }
-
-  // TODO(devoncarew): This fails for ios devices - we haven't built yet.
-  if (install && device is AndroidDevice) {
-    printStatus('Installing $package to $device...');
-
-    if (!(installApp(device, package, uninstall: false)))
-      return 1;
-  }
-
-  Map<String, dynamic> platformArgs = <String, dynamic>{};
-
-  if (traceStartup != null)
-    platformArgs['trace-startup'] = traceStartup;
-
-  printStatus('Running ${getDisplayPath(mainPath)} on ${device.name}...');
-
-  LaunchResult result = await device.startApp(
-    package,
-    buildMode,
-    mainPath: mainPath,
-    route: route,
-    debuggingOptions: debuggingOptions,
-    platformArgs: platformArgs
-  );
-
-  stopwatch.stop();
-
-  if (!result.started) {
-    printError('Error running application on ${device.name}.');
-  } else if (traceStartup) {
-    try {
-      VMService observatory = await VMService.connect(result.observatoryPort);
-      await downloadStartupTrace(observatory);
-    } catch (error) {
-      printError('Error downloading trace from observatory: $error');
-      return 1;
-    }
-  }
-
-  if (benchmark)
-    writeRunBenchmarkFile(stopwatch);
-
-  return result.started ? 0 : 2;
 }

@@ -8,6 +8,7 @@ import 'dart:io';
 import 'package:meta/meta.dart';
 import 'package:path/path.dart' as path;
 
+import 'application_package.dart';
 import 'base/logger.dart';
 import 'build_info.dart';
 import 'device.dart';
@@ -45,7 +46,11 @@ abstract class ResidentRunner {
     bool shouldBuild: true
   });
 
-  Future<OperationResult> restart({ bool fullRestart: false, bool pauseAfterRestart: false });
+  bool get supportsRestart => false;
+
+  Future<OperationResult> restart({ bool fullRestart: false, bool pauseAfterRestart: false }) {
+    throw 'unsupported';
+  }
 
   Future<Null> stop() async {
     await stopEchoingDeviceLog();
@@ -87,6 +92,8 @@ abstract class ResidentRunner {
     });
     if (!supportsServiceProtocol)
       return;
+    if (!supportsRestart)
+      return;
     ProcessSignal.SIGUSR1.watch().listen((ProcessSignal signal) async {
       printStatus('Caught SIGUSR1');
       await restart(fullRestart: false);
@@ -97,11 +104,11 @@ abstract class ResidentRunner {
     });
   }
 
-  Future<Null> startEchoingDeviceLog() async {
+  Future<Null> startEchoingDeviceLog(ApplicationPackage app) async {
     if (_loggingSubscription != null) {
       return;
     }
-    _loggingSubscription = device.logReader.logLines.listen((String line) {
+    _loggingSubscription = device.getLogReader(app: app).logLines.listen((String line) {
       if (!line.contains('Observatory listening on http') &&
           !line.contains('Diagnostic server listening on http'))
         printStatus(line);

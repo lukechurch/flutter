@@ -52,9 +52,35 @@ class AssetBundle {
   static const String _kFontSetMaterial = 'material';
   static const String _kFontSetRoboto = 'roboto';
 
+  bool _fixed = false;
   DateTime _lastBuildTimestamp;
 
+  /// Constructs an [AssetBundle] that gathers the set of assets from the
+  /// flutter.yaml manifest.
+  AssetBundle();
+
+  /// Constructs an [AssetBundle] with a fixed set of assets.
+  /// [projectRoot] The absolute path to the project root.
+  /// [projectAssets] comma separated list of assets.
+  AssetBundle.fixed(String projectRoot, String projectAssets) {
+    _fixed = true;
+    if ((projectRoot == null) || (projectAssets == null))
+      return;
+
+    List<String> assets = projectAssets.split(',');
+    for (String asset in assets) {
+      if (asset == '')
+        continue;
+      final String assetPath = path.join(projectRoot, asset);
+      final String archivePath = asset;
+      entries.add(
+          new AssetBundleEntry.fromFile(archivePath, new File(assetPath)));
+    }
+  }
+
   bool needsBuild({String manifestPath: defaultManifestPath}) {
+    if (_fixed)
+      return false;
     if (_lastBuildTimestamp == null)
       return true;
 
@@ -75,7 +101,14 @@ class AssetBundle {
   }) async {
     workingDirPath ??= getAssetBuildDirectory();
     packagesPath ??= path.absolute(PackageMap.globalPackagesPath);
-    Object manifest = _loadFlutterYamlManifest(manifestPath);
+    Object manifest;
+    try {
+      manifest = _loadFlutterYamlManifest(manifestPath);
+    } catch (e) {
+      printStatus('Error detected in flutter.yaml:', emphasis: true);
+      printError(e);
+      return 1;
+    }
     if (manifest == null) {
       // No manifest file found for this application.
       return 0;
@@ -449,13 +482,8 @@ Future<int> _validateFlutterYamlManifest(Object manifest) async {
   if (validator.validate(manifest)) {
     return 0;
   } else {
-    if (validator.errors.length == 1) {
-      printError('Error in flutter.yaml: ${validator.errors.first}');
-    } else {
-      printError('Error in flutter.yaml:');
-      printError('  ' + validator.errors.join('\n  '));
-    }
-
+    printStatus('Error detected in flutter.yaml:', emphasis: true);
+    printError(validator.errors.join('\n'));
     return 1;
   }
 }
