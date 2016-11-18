@@ -77,6 +77,8 @@ abstract class WidgetsBinding extends BindingBase implements GestureBinding, Ren
     
     registerServiceExtension(
       name: 'debugReturnElementTree', callback: debugReturnElementTree);
+    registerServiceExtension(
+      name: 'debugReturnUserWidgetTree', callback: debugReturnUserWidgetTree);
 
     registerSignalServiceExtension(
       name: 'debugDumpApp',
@@ -468,6 +470,61 @@ Future<Map<String, dynamic>> debugReturnElementTree(
   return top();
 }
 
+/* Allow the service protocol to access
+ * the User's logical Widget tree.
+ *  The actual Flutter objects
+ *  collected  are serialized into maps
+ *  to whatever depth we find useful.  The service protocol has expectations wrt to
+ *  this - it expects a type field for example.
+ */
+
+Future<Map<String, dynamic>> debugReturnUserWidgetTree(
+    Map<String, String> parameters) async {
+  List<Map<String, dynamic>> stack = [
+    {'children': []}
+  ];
+
+  Element tree =
+      WidgetsBinding.instance.renderViewElement;
+// the root of the element tree
+
+  push(Map<String, dynamic> e) {
+    stack.add(e);
+  }
+
+  Map<String, dynamic> pop() {
+    return stack.removeLast();
+  }
+
+  Map<String, dynamic> top() {
+    return stack.last;
+  }
+
+  String mapType(Type t) => t.toString();
+
+  Map<String, dynamic> mapWidget(e) {
+    return {
+      'type': mapType(e.runtimeType),
+      'ctorLocation': e.ctorLocation,
+      'children': []
+    };
+  }
+
+
+  void userWidgetCollector(Element e) {
+    if (null != e.widget.ctorLocation) {
+       var map = mapWidget(e);
+       top()['children'].add(map);
+       push(map);
+       e.visitChildren(userWidgetCollector);
+       pop();
+    }
+    else {e.visitChildren(userWidgetCollector);}
+  }
+
+  tree.visitChildren(userWidgetCollector);
+  return top();
+}
 
 /// A bridge from a [RenderObject] to an [Element] tree.
 ///

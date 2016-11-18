@@ -64,6 +64,13 @@ abstract class ResidentRunner {
 
     return await currentView.uiIsolate.flutterDebugReturnElementTree();
   }
+
+  Future<Map<String, dynamic>> _debugReturnUserWidgetTree() async {
+    if (vmService != null)
+      await vmService.vm.refreshViews();
+
+    return await currentView.uiIsolate.flutterDebugReturnUserWidgetTree();
+  }
   
   Future<Null> _debugDumpApp() async {
     if (vmService != null)
@@ -163,6 +170,9 @@ abstract class ResidentRunner {
       return true;
     } else if (lower == 'f') {
       print (await _debugReturnElementTree());
+      return true;
+    } else if (lower == 'u') {
+      print (await _debugReturnUserWidgetTree());
       return true;
     } else if (lower == 'q' || character == AnsiTerminal.KEY_F10) {
       // F10, exit
