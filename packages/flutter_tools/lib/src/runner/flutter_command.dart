@@ -21,7 +21,7 @@ import 'flutter_command_runner.dart';
 
 typedef void Validator();
 
-abstract class FlutterCommand extends Command<Null> {
+abstract class FlutterCommand extends Command {
   FlutterCommand() {
     commandValidator = commonCommandValidator;
   }
