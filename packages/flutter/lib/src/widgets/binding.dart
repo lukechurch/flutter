@@ -513,7 +513,7 @@ Future<Map<String, dynamic>> debugReturnUserWidgetTree(
 
   void userWidgetCollector(Element e) {
     if (null != e.widget.ctorLocation) {
-       var map = mapWidget(e);
+       var map = mapWidget(e.widget);
        top()['children'].add(map);
        push(map);
        e.visitChildren(userWidgetCollector);
