@@ -39,8 +39,9 @@ class Icon extends StatelessWidget {
   const Icon(this.icon, {
     Key key,
     this.size,
-    this.color
-  }) : super(key: key);
+    this.color,
+    String ctorLocation
+  }) : super(key: key, ctorLocation: ctorLocation);
 
   /// The icon to display. The available icons are described in [Icons].
   ///

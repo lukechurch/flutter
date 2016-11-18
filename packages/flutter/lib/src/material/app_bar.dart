@@ -155,10 +155,11 @@ class AppBar extends StatelessWidget {
     this.centerTitle,
     this.heroTag,
     double expandedHeight,
-    double collapsedHeight
+    double collapsedHeight,
+    String ctorLocation,
   }) : _expandedHeight = expandedHeight,
        _collapsedHeight = collapsedHeight,
-       super(key: key);
+    super(key: key, ctorLocation: ctorLocation);
 
   /// A widget to display before the [title].
   ///

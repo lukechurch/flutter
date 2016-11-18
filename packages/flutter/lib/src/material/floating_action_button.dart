@@ -51,8 +51,9 @@ class FloatingActionButton extends StatefulWidget {
     this.elevation: 6,
     this.highlightElevation: 12,
     @required this.onPressed,
-    this.mini: false
-  }) : super(key: key);
+    this.mini: false,
+    String ctorLocation
+  }) : super(key: key, ctorLocation: ctorLocation);
 
   /// The widget below this widget in the tree.
   final Widget child;

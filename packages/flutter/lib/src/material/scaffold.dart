@@ -316,8 +316,9 @@ class Scaffold extends StatefulWidget {
     this.bottomNavigationBar,
     this.scrollableKey,
     this.appBarBehavior: AppBarBehavior.anchor,
-    this.resizeToAvoidBottomPadding: true
-  }) : super(key: key);
+    this.resizeToAvoidBottomPadding: true,
+    String ctorLocation
+  }) : super(key: key, ctorLocation: ctorLocation);
 
   /// An app bar to display at the top of the scaffold.
   final AppBar appBar;

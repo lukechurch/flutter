@@ -621,8 +621,9 @@ class Align extends SingleChildRenderObjectWidget {
     this.alignment: FractionalOffset.center,
     this.widthFactor,
     this.heightFactor,
-    Widget child
-  }) : super(key: key, child: child) {
+    Widget child,
+    String ctorLocation
+  }) : super(key: key, child: child, ctorLocation: ctorLocation) {
     assert(alignment != null && alignment.dx != null && alignment.dy != null);
     assert(widthFactor == null || widthFactor >= 0.0);
     assert(heightFactor == null || heightFactor >= 0.0);
@@ -679,8 +680,8 @@ class Align extends SingleChildRenderObjectWidget {
 ///    rather than just centering it.
 class Center extends Align {
   /// Creates a widget that centers its child.
-  Center({ Key key, double widthFactor, double heightFactor, Widget child })
-    : super(key: key, widthFactor: widthFactor, heightFactor: heightFactor, child: child);
+  Center({ Key key, double widthFactor, double heightFactor, Widget child, String ctorLocation })
+    : super(key: key, widthFactor: widthFactor, heightFactor: heightFactor, child: child, ctorLocation: ctorLocation);
 }
 
 /// A widget that defers the layout of its single child to a delegate.
